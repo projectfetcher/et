@@ -39,76 +39,44 @@ except ImportError:
 # =============================================================================
 #  CONFIG
 # =============================================================================
-#
-#  SOURCE
-#  ------
-#  https://ethiojobs.net/jobs  — the live job board.
-#
-#  ethiojobs.net is a Next.js single-page app: the HTML you get from a plain
-#  GET request is just a loading screen (a <video> tag), with NO job content in
-#  it. So there are no HTML job cards to parse — BeautifulSoup
-#  on the page body would read zero jobs. Instead the page fetches all its data
-#  in-browser from a JSON backend (api.ethiojobs.net). This scraper calls that
-#  JSON API directly with plain `requests` — no browser, no Playwright, lighter
-#  and faster than HTML scraping. The exact API base/endpoints are discovered
-#  automatically on first run (see discover_api) by reading the site's own
-#  JavaScript bundles, then cached to API_CACHE_FILE. You can override any of it
-#  via the env vars below, or run `python <thisfile> --discover` to print what
-#  was found.
-#
-#  APPLY RULE (hard, network-wide)
-#  -------------------------------
-#  A job only posts if it exposes a PUBLIC apply path: an email or an external
-#  apply URL in its body / how-to-apply text. EthioJobs' own "Apply Now" button
-#  is on-platform (login required), so the EthioJobs page is NOT treated as a
-#  valid apply destination by default. Jobs without a public email/URL are
-#  written to the flagged CSV. REQUIRE_PUBLIC_APPLY (default "1"/on) enforces
-#  this; set to "0" to post everything. Set APPLY_VIA_SOURCE_URL=1 to instead
-#  treat each EthioJobs job page as the external apply target (a per-source
-#  policy opt-in, default off).
-# =============================================================================
 
 BASE_URL = "https://ethiojobs.net"
 
-# Listing page(s) on the public site (used for the human-facing job_url + as the
-# discovery seed). Comma-separated env override. Examples:
-#   all jobs:            https://ethiojobs.net/jobs
-#   by category:         https://ethiojobs.net/jobs/accounting-and-finance
-#   by region:           https://ethiojobs.net/jobs/region/addis-ababa
 JOBS_URL  = os.environ.get("ETHIOJOBS_JOBS_URL", "https://ethiojobs.net/jobs")
 LISTING_URLS = [u.strip() for u in
                 os.environ.get("ETHIOJOBS_LISTING_URLS", JOBS_URL).split(",") if u.strip()]
 
-# JSON backend. Discovered automatically on first run; these are the defaults /
-# overrides. API_BASE is the host; the list/detail PATHS are tried in order until
-# one returns job JSON, and the winner is cached. {id} is filled with the job's id.
-API_BASE          = os.environ.get("ETHIOJOBS_API_BASE", "https://api.ethiojobs.net")
-API_LIST_PATHS    = [p.strip() for p in os.environ.get(
+API_BASE         = os.environ.get("ETHIOJOBS_API_BASE", "https://api.ethiojobs.net")
+API_LIST_PATHS   = [p.strip() for p in os.environ.get(
     "ETHIOJOBS_API_LIST_PATHS",
+    # Expanded candidate list — /api/job-board/ prefix discovered from JS scan
+    "/api/job-board/jobs,/api/job-board/vacancies,/api/job-board/active-jobs,"
+    "/api/job-board/job-listings,/api/job-board/listing,"
+    "/api/jobs/search,/api/jobs/list,/api/jobs,"
+    "/api/job/search,/api/job/list,/api/job,"
+    "/api/vacancy/search,/api/vacancies,"
     "/job/search,/jobs/search,/job/list,/jobs,/job,/vacancy/search,/vacancies"
 ).split(",") if p.strip()]
-API_DETAIL_PATHS  = [p.strip() for p in os.environ.get(
+API_DETAIL_PATHS = [p.strip() for p in os.environ.get(
     "ETHIOJOBS_API_DETAIL_PATHS",
+    "/api/job-board/jobs/{id},/api/jobs/{id},/api/job/{id},"
     "/job/{id},/jobs/{id},/vacancy/{id},/job/detail/{id},/job/get/{id}"
 ).split(",") if p.strip()]
-API_CACHE_FILE    = os.environ.get("ETHIOJOBS_API_CACHE", "ethiojobs_api_cache.json")
+API_CACHE_FILE   = os.environ.get("ETHIOJOBS_API_CACHE", "ethiojobs_api_cache.json")
 
-# Enforce the public-apply-only rule (email or external URL required to post).
 REQUIRE_PUBLIC_APPLY = os.environ.get("REQUIRE_PUBLIC_APPLY", "1") != "0"
-# Treat the EthioJobs job page itself as the external apply target (on-platform apply).
 APPLY_VIA_SOURCE_URL = os.environ.get("APPLY_VIA_SOURCE_URL", "0") == "1"
 
 REQUEST_DELAY   = float(os.environ.get("REQUEST_DELAY", "1.0"))
-MAX_JOBS        = int(os.environ.get("MAX_JOBS", "0"))     # 0 = unlimited
-MAX_PAGES       = int(os.environ.get("MAX_PAGES", "50"))   # listing pagination cap
-PAGE_SIZE       = int(os.environ.get("PAGE_SIZE", "20"))   # records requested per page
+MAX_JOBS        = int(os.environ.get("MAX_JOBS", "0"))
+MAX_PAGES       = int(os.environ.get("MAX_PAGES", "50"))
+PAGE_SIZE       = int(os.environ.get("PAGE_SIZE", "20"))
 REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", "25"))
 
 OUTPUT_FILE        = "ethiojobs_ethiopia_jobs.xlsx"
 PROCESSED_IDS_FILE = "ethiojobs_ethiopia_processed.csv"
 FLAGGED_FILE       = "ethiojobs_ethiopia_flagged.csv"
 
-# CSV column names — defined once so _init_tracker, load, and upsert all agree.
 _TRACKER_FIELDS = ["Job ID", "Job URL", "Job Title", "Company Name",
                    "Status", "Timestamp", "WP ID"]
 
@@ -161,8 +129,6 @@ HEADERS = {
 SESSION = requests.Session()
 SESSION.headers.update(HEADERS)
 
-# Known Ethiopian towns/cities/regions, used as a fallback to pull a location
-# from free text when the API location field is empty.
 ETHIOPIA_LOCATIONS = [
     "Addis Ababa", "Adama", "Nazret", "Dire Dawa", "Mekelle", "Mekele",
     "Bahir Dar", "Hawassa", "Awassa", "Gondar", "Jimma", "Dessie", "Jijiga",
@@ -173,10 +139,8 @@ ETHIOPIA_LOCATIONS = [
     "Oromia", "Amhara", "Tigray", "Sidama", "Afar", "Somali", "Benishangul",
     "SNNPR", "Gambella", "Dukem", "Holeta",
 ]
-# EthioJobs uses "Ethiopia" as the country-level catch-all location.
 DEFAULT_LOCATION = os.environ.get("ETHIOJOBS_DEFAULT_LOCATION", "Ethiopia")
 
-# Hosts/paths that are never a real external apply destination.
 _NON_APPLY_HOST_SUBSTR = (
     "ethiojobs.net", "ethiojobs.org", "ethiojobs.com", "dereja.com",
     "facebook.", "twitter.", "x.com", "linkedin.",
@@ -188,7 +152,6 @@ _NON_APPLY_PATH_SUBSTR = (
     "action=login", "mode=register", "#share", "/share",
     "/cart", "/checkout", "/account",
 )
-# Emails belonging to the board itself are never a real apply address.
 _NON_APPLY_EMAIL_DOMAINS = ("ethiojobs.net", "ethiojobs.org", "dereja.com")
 
 def _is_real_apply_email(email: str) -> bool:
@@ -196,6 +159,21 @@ def _is_real_apply_email(email: str) -> bool:
         return False
     dom = email.rsplit("@", 1)[-1].lower()
     return not any(dom == d or dom.endswith("." + d) for d in _NON_APPLY_EMAIL_DOMAINS)
+
+def _is_real_apply_url(url: str) -> bool:
+    if not url or not url.startswith("http"):
+        return False
+    try:
+        p = urlsplit(url)
+        host = p.netloc.lower()
+        path = p.path.lower()
+        if any(s in host for s in _NON_APPLY_HOST_SUBSTR):
+            return False
+        if any(s in path for s in _NON_APPLY_PATH_SUBSTR):
+            return False
+        return True
+    except Exception:
+        return False
 
 # =============================================================================
 #  LOGGING / COLOUR
@@ -236,27 +214,18 @@ MONTHS = {
     "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
 }
 
-# Ordinal text date e.g. "30th June 2026" / "7th July, 2026".
 TEXT_DATE_RE = re.compile(
     r"(\d{1,2})\s*(?:st|nd|rd|th)?\s+([A-Za-z]+)\s*[.,]?\s*(\d{4})", re.I
 )
-# Numeric DD/MM/YYYY or DD-MM-YYYY.
 DMY_DATE_RE = re.compile(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b")
-# Month-first text date — EthioJobs' native display form, e.g.
-# "June 17th, 2026", "June 24/2026", "Sept 1 2026", "January 3, 2027".
 MDY_TEXT_DATE_RE = re.compile(
     r"([A-Za-z]{3,9})\s+(\d{1,2})\s*(?:st|nd|rd|th)?\s*[,/]?\s*(\d{4})", re.I
 )
-# ISO 8601 from the JSON API, e.g. "2026-06-17" or "2026-06-17T09:00:00Z".
 ISO_DATE_RE = re.compile(r"(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)")
 
-# Labels inside the JobMonster "Job Overview" box.
 DEADLINE_LABELS = ("application deadline", "closing date", "deadline",
                    "expiry date", "expires")
 
-# Body headings that introduce the application instructions. Matched against a
-# *stripped, short* line (see _is_apply_heading_line) so it never trips on
-# 'Application Deadline:' / 'Application Format' or a mid-sentence 'to apply'.
 _APPLY_HEAD_PHRASES = re.compile(
     r"^(?:how\s*(?:and|&)\s*deadline\s*to\s*apply|how\s*to\s*apply(?:\s*(?:and|&)\s*deadline)?|"
     r"how\s*to\s*submit|to\s*apply|application\s*(?:and|&)\s*deadline|"
@@ -266,13 +235,11 @@ _APPLY_HEAD_PHRASES = re.compile(
     re.I,
 )
 
-# Boilerplate that marks the end of usable post content on a detail page.
 _BODY_CUT_MARKERS = [
     "related jobs", "leave your thoughts", "you must be logged in",
     "email me jobs like these", "send to a friend", "company information",
     "leave a reply", "post a comment",
 ]
-# Standalone UI lines to drop from the description.
 _BODY_DROP_LINES = {
     "apply for this job", "save", "share", "share:", "bookmark job",
     "quick view", "send to friend", "send to a friend", "clear all",
@@ -352,11 +319,6 @@ def slugify(text, maxlen=80):
     return s[:maxlen] or "job"
 
 def html_block_to_text(el) -> str:
-    """
-    Convert a BeautifulSoup element to readable plain text, preserving line
-    breaks for block-level tags and turning <li> into bullet lines. The block is
-    mutated in place — only ever call this on a throwaway/per-job element.
-    """
     if el is None:
         return ""
     for br in el.find_all("br"):
@@ -379,7 +341,6 @@ def html_block_to_text(el) -> str:
 # =============================================================================
 
 def dmy_dates(text: str) -> list:
-    """Return ISO dates parsed from DD/MM/YYYY (or DD-MM-YYYY), in order."""
     out = []
     for d, m, y in DMY_DATE_RE.findall(text or ""):
         try:
@@ -389,7 +350,6 @@ def dmy_dates(text: str) -> list:
     return out
 
 def text_dates(text: str) -> list:
-    """Return ISO dates parsed from ordinal text form ('30th June 2026'), in order."""
     out = []
     for d, mon, y in TEXT_DATE_RE.findall(text or ""):
         month = MONTHS.get(mon.lower())
@@ -402,7 +362,6 @@ def text_dates(text: str) -> list:
     return out
 
 def mdy_text_dates(text: str) -> list:
-    """Return ISO dates parsed from month-first text ('June 17th, 2026'), in order."""
     out = []
     for mon, d, y in MDY_TEXT_DATE_RE.findall(text or ""):
         month = MONTHS.get(mon.lower())
@@ -415,7 +374,6 @@ def mdy_text_dates(text: str) -> list:
     return out
 
 def iso_dates(text: str) -> list:
-    """Return ISO dates parsed from YYYY-MM-DD (API form), in order."""
     out = []
     for y, m, d in ISO_DATE_RE.findall(text or ""):
         try:
@@ -425,12 +383,6 @@ def iso_dates(text: str) -> list:
     return out
 
 def parse_any_date(text: str) -> str:
-    """
-    Best single date from a value. EthioJobs returns ISO from the API and shows
-    month-first text on the page ('June 17th, 2026'); legacy/free text may be
-    day-first or numeric. Try ISO and month-first first (native forms), then fall
-    back to day-first text and numeric DD/MM/YYYY.
-    """
     for fn in (iso_dates, mdy_text_dates, text_dates, dmy_dates):
         ds = fn(text)
         if ds:
@@ -438,7 +390,6 @@ def parse_any_date(text: str) -> str:
     return ""
 
 def clean_title(raw: str) -> str:
-    """Strip the trailing ' 1442 views' / 'views' counter from a detail H1."""
     t = sanitize_text(raw)
     t = re.sub(r"\s*\d[\d,]*\s*views?\s*$", "", t, flags=re.I)
     t = re.sub(r"\s*views?\s*$", "", t, flags=re.I)
@@ -449,7 +400,6 @@ def map_job_type(raw: str) -> str:
     return JOB_TYPE_MAPPING.get(key, "full-time")
 
 def pick_location(locations: list) -> str:
-    """Prefer a specific town over the country-level 'Ethiopia' catch-all."""
     specific = [l for l in locations if l and l.strip().lower() not in ("ethiopia",)]
     if specific:
         return specific[0].strip()
@@ -481,30 +431,21 @@ def extract_experience(qual_text: str) -> str:
     return ""
 
 def extract_salary(text: str) -> str:
-    """Best-effort salary. EthioJobs often omits a figure; returns '' if none."""
     if not text:
         return ""
-    m = re.search(r"(?:GMD|D|GMD\s|D\s|₵)\s*([0-9]{1,3}(?:,\s?[0-9]{3})+(?:\.[0-9]+)?)", text)
+    m = re.search(r"(?:ETB|Birr|birr)\s*([0-9]{1,3}(?:,\s?[0-9]{3})+(?:\.[0-9]+)?)", text)
     if m:
         amt = re.sub(r"\s+", "", m.group(1))
-        return f"GMD {amt}"
+        return f"ETB {amt}"
     m = re.search(r"\b(?:salary|remuneration)\b[^.\n]{0,80}", text, re.I)
     if m and re.search(r"\d", m.group(0)):
         return m.group(0).strip().rstrip(".")
     return ""
 
 # =============================================================================
-#  CANONICAL NORMALISERS  (shared schema — qualification tier / experience band /
-#  job field). These mirror the mappings used across the other country pipelines
-#  so EthioJobs rows land in the same shape: a TIER label for qualification, a BAND
-#  label for experience, and a single canonical FIELD rather than the site's raw
-#  multi-category tag dump.
+#  CANONICAL NORMALISERS
 # =============================================================================
 
-# Keyword matcher shared by the tier/field maps. Short or ambiguous tokens (<=3
-# chars, e.g. "pa", "hr", "ma", "qa", "0 years") must match as whole words so they
-# don't fire inside longer words ("diploma", "patrol", "40 years"); longer tokens
-# keep prefix behaviour so "developer" still catches "developers".
 def _kw_hit(text_low: str, keywords) -> bool:
     for k in keywords:
         kk = k.strip().lower()
@@ -512,17 +453,13 @@ def _kw_hit(text_low: str, keywords) -> bool:
             continue
         esc = re.escape(kk)
         if len(kk) <= 3:
-            # acronyms/codes -> exact whole token
             pat = r"(?<![a-z0-9])" + esc + r"(?![a-z0-9])"
         else:
-            # whole token, tolerating a plural 's'/'es' (developer->developers)
-            # but NOT an arbitrary suffix (quota !-> quotation, ma !-> diploma)
             pat = r"(?<![a-z0-9])" + esc + r"(?:es|s)?(?![a-z0-9])"
         if re.search(pat, text_low):
             return True
     return False
 
-# --- Qualification: text -> single tier label -------------------------------
 QUALIFICATION_TIERS = [
     ("PhD / Doctorate",          ["phd", "ph.d", "doctorate", "doctoral", "doctor of philosophy"]),
     ("Master's Degree",          ["master", "msc", "m.sc", "ma ", "m.a ", "mba", "m.b.a", "meng",
@@ -550,7 +487,6 @@ QUALIFICATION_TIERS = [
 def extract_qualification(text: str) -> str:
     if not text:
         return ""
-    # Skip school-admission notices that merely mention pupils' ages/levels.
     if re.search(r"nursery|primary years|ib pyp|aged between|boys and girls", text, re.I):
         return ""
     lower = text.lower()
@@ -559,7 +495,6 @@ def extract_qualification(text: str) -> str:
             return label
     return ""
 
-# --- Experience: text -> single band label ----------------------------------
 NO_EXP_KW = ["no experience", "no prior experience", "fresh graduate", "freshers",
              "entry level", "entry-level", "0 years", "zero experience",
              "training provided", "will train", "no experience required"]
@@ -573,57 +508,43 @@ def years_to_band(n: int) -> str:
     if n <= 10: return "6 - 10 Years"
     return "10+ Years"
 
-# Only treat a number as a *requirement* when it sits in an experience context,
-# so org-history phrasing ("established 40 years ago", "since 1982") is ignored.
-# A real job requirement is also capped at a sane ceiling.
 _EXP_CAP = 20
 _EXP_REQ_RE = re.compile(
     r"(?:minimum|min\.?|at\s+least|atleast|least|over|more\s+than|not\s+less\s+than|"
     r"minimum\s+of|a\s+minimum\s+of)\s+(?:of\s+)?(\d{1,2})\s*\+?\s*years?", re.I)
-# "N years of <work/experience/…>" is itself a tenure requirement, even without a
-# 'minimum' prefix and even when 'experience' is far away in the sentence.
 _EXP_YEARS_OF_RE = re.compile(r"(\d{1,2})\s*\+?\s*years?\s+of\b", re.I)
 _EXP_ANY_YEARS_RE = re.compile(r"(\d{1,2})\s*\+?\s*years?", re.I)
 _EXP_RANGE_RE = re.compile(r"(\d{1,2})\s*(?:-|–|to)\s*(\d{1,2})\s*years?", re.I)
 
 def extract_experience_band(text: str) -> str:
-    """Map free text to one of the canonical experience bands (or '')."""
     if not text:
         return ""
     low = text.lower()
     years = []
-    # (a) explicit requirement phrasing: "minimum 3 years", "at least 5 years"
     for m in _EXP_REQ_RE.finditer(text):
         n = int(m.group(1))
         if 0 < n <= _EXP_CAP:
             years.append(n)
-    # (b) "N years of ..." tenure construction (capped, so org-history "40 years
-    #     of experience" is filtered out by _EXP_CAP).
     for m in _EXP_YEARS_OF_RE.finditer(low):
         n = int(m.group(1))
         if 0 < n <= _EXP_CAP:
             years.append(n)
-    # (c) "N years ... experience" with 'experience' near the figure
     for m in _EXP_ANY_YEARS_RE.finditer(low):
         n = int(m.group(1))
         if 0 < n <= _EXP_CAP and "experien" in low[m.end():m.end() + 60]:
             years.append(n)
-    # (d) ranges: "3-5 years", "3 to 5 years"
     for m in _EXP_RANGE_RE.finditer(text):
         a = int(m.group(1))
         if 0 < a <= _EXP_CAP:
             years.append(a)
     if years:
-        return years_to_band(min(years))           # explicit figure wins
+        return years_to_band(min(years))
     if _kw_hit(low, NO_EXP_KW):
         return "No Experience Required"
     if _kw_hit(low, LESS1_KW):
-        return "1 - 2 Years"                       # floor band (no sub-1yr bucket)
+        return "1 - 2 Years"
     return ""
 
-# --- Job field: title+description -> single canonical field -----------------
-# (field, strong keywords, weak keywords). Strong matches win over weak; the
-# list order is the tie-break priority.
 FIELD_KEYWORD_MAP = [
     ("Information Technology",
      ["software engineer", "developer", "devops", "frontend", "backend", "full stack", "fullstack",
@@ -720,9 +641,6 @@ FIELD_KEYWORD_MAP = [
      ["social", "ngo", "community", "welfare", "beneficiary", "donor", "impact", "charity"]),
 ]
 
-# Procurement / notice markers in a title. Conservative: clear acronyms as whole
-# tokens plus unambiguous phrases. Deliberately does NOT match a bare "call for
-# applications" (often a volunteer/role advert, not a tender).
 _TENDER_TITLE_RE = re.compile(
     r"\b(?:rfq|rfp|reoi|eoi|itb|itt|spn|rfb|rfa|gpn|ifb|rfi)\b"
     r"|invitation\s+to\s+(?:bid|tender)|invitation\s+for\s+bids?"
@@ -736,19 +654,9 @@ _TENDER_TITLE_RE = re.compile(
 TENDER_FIELD = "Public Notices & Tenders"
 
 def infer_field(title: str, description: str, fallback_categories: str = "") -> str:
-    """
-    Resolve a single canonical job field from the title + description. Procurement
-    notices (common in the EthioJobs feed) are detected first and routed to
-    "Public Notices & Tenders" — otherwise incidental keyword hits mislabel them
-    (e.g. the word "tender" lives in Construction's weak list, and an SPN for a
-    "Digital Marketing Campaign" would land in Marketing). After that, strong
-    keywords win over weak (list order = tie-break). If nothing matches, fall back
-    to the site's own category so the field is never empty.
-    """
     title_l = (title or "").lower()
     if _TENDER_TITLE_RE.search(title_l):
         return TENDER_FIELD
-
     text = f"{title}\n{description}".lower()
     for field, strong, _weak in FIELD_KEYWORD_MAP:
         if _kw_hit(text, strong):
@@ -758,7 +666,6 @@ def infer_field(title: str, description: str, fallback_categories: str = "") -> 
             return field
     if fallback_categories:
         cats = [c.strip() for c in fallback_categories.split(",") if c.strip()]
-        # Prefer the site's tender/notice category if it tagged one.
         for c in cats:
             if "tender" in c.lower() or "notice" in c.lower():
                 return TENDER_FIELD
@@ -958,7 +865,6 @@ def paraphrase_description(text: str) -> str:
         _print_wrapped(para, prefix=" │ │    ")
         print(f" │ │ {'─'*60}")
 
-        # Very short fragments (section labels, single bullets) — keep as-is.
         if orig_wc < 8:
             print(f" │ │ (kept — too short to paraphrase safely)")
             rewritten.append(para)
@@ -1034,7 +940,7 @@ def paraphrase_description(text: str) -> str:
     return "\n\n".join(rewritten)
 
 # =============================================================================
-#  DUPLICATE TRACKER — pure stdlib csv, NO pandas dependency
+#  DUPLICATE TRACKER
 # =============================================================================
 
 def _init_tracker():
@@ -1119,7 +1025,7 @@ def mark_failed(job_id, reason):
     _upsert_row(job_id, {"Status": f"failed|{reason}"})
 
 # =============================================================================
-#  FLAGGED CSV (non-qualifying / login-only apply)
+#  FLAGGED CSV
 # =============================================================================
 
 def _init_flagged():
@@ -1220,7 +1126,6 @@ def post_job_to_wordpress(job: dict) -> tuple:
     if not (is_email or is_url_v):
         application = ""
 
-    # Upload logo
     attachment_id = None
     if logo_url:
         try:
@@ -1285,31 +1190,9 @@ def post_job_to_wordpress(job: dict) -> tuple:
     return None, None
 
 # =============================================================================
-#  ETHIOJOBS JSON-API SCRAPE LAYER  (pure requests — no browser)
-# =============================================================================
-#
-#  ethiojobs.net is a Next.js SPA whose HTML is just a loading screen, so there
-#  is nothing for BeautifulSoup to read on the page body. All job data is served
-#  as JSON by the site's backend (api.ethiojobs.net), which the browser calls
-#  client-side. We call that same JSON API directly with `requests`.
-#
-#  Because the exact backend routes are not published, the scraper discovers them
-#  automatically on first run (discover_api): it downloads the site's own
-#  JavaScript bundles and reads the API base URL + route fragments straight out
-#  of them, then probes the candidate list/detail endpoints and caches the
-#  working ones to API_CACHE_FILE. Subsequent runs read the cache. You can also
-#  hard-set everything via the ETHIOJOBS_API_* env vars, or run with --discover
-#  to print what was found.
-#
-#  FLOW
-#  ----
-#    discover_api()                  -> {"base","list","detail"} (cached)
-#    collect_job_records(list_ep)    -> list of raw job dicts (paged JSON)
-#    scrape_job_detail(rec_or_url)   -> normalised raw_job dict via _map_job_record
+#  ETHIOJOBS JSON-API SCRAPE LAYER
 # =============================================================================
 
-# A browser-like API session: many JSON backends behind a SPA check Origin/
-# Referer and an Accept: application/json header.
 API_SESSION = requests.Session()
 API_SESSION.headers.update({
     "User-Agent": HEADERS["User-Agent"],
@@ -1319,7 +1202,6 @@ API_SESSION.headers.update({
     "Referer": BASE_URL + "/",
 })
 
-# EthioJobs career-level label -> our standard experience band.
 _CAREER_LEVEL_MAP = {
     "junior level(1-3 years)":  "1 - 2 Years",
     "junior level (1-3 years)": "1 - 2 Years",
@@ -1341,7 +1223,6 @@ _CAREER_LEVEL_MAP = {
 }
 
 def _career_level_to_band(raw: str) -> str:
-    """Convert an EthioJobs career-level string to our standard experience band."""
     if not raw:
         return ""
     key = raw.strip().lower()
@@ -1357,8 +1238,6 @@ def _career_level_to_band(raw: str) -> str:
         return "10+ Years"
     return ""
 
-# Candidate API field names per logical field, tried in order. Covers snake_case
-# and camelCase so minor backend renames don't silently drop data.
 _JOB_KEY_CANDIDATES = {
     "id":           ["id", "_id", "jobId", "job_id", "slug", "token", "uuid"],
     "title":        ["title", "jobTitle", "job_title", "name", "position", "positionTitle"],
@@ -1403,12 +1282,10 @@ _JOB_KEY_CANDIDATES = {
 }
 
 def _pick(data: dict, field: str, default=""):
-    """Return the first non-empty candidate value for a logical field."""
     for k in _JOB_KEY_CANDIDATES.get(field, []):
         if k in data:
             v = data.get(k)
             if isinstance(v, dict):
-                # nested object e.g. {"name": "..."} or {"title": "..."}
                 v = v.get("name") or v.get("title") or v.get("value") or ""
             if isinstance(v, list):
                 v = ", ".join(str(x.get("name", x) if isinstance(x, dict) else x) for x in v)
@@ -1419,7 +1296,6 @@ def _pick(data: dict, field: str, default=""):
 _JOB_LIKE_KEYS = ("jobtitle", "job_title", "title", "position", "positiontitle")
 
 def _is_job_api_response(data) -> bool:
-    """Heuristic: is this JSON a job record, or a wrapper holding a list of jobs?"""
     if isinstance(data, dict):
         keys_low = {k.lower() for k in data}
         if any(k in keys_low for k in _JOB_LIKE_KEYS):
@@ -1442,7 +1318,6 @@ def _is_job_api_response(data) -> bool:
     return False
 
 def _extract_job_list_from_api(data) -> list:
-    """Given an API response blob, return a list of job-record dicts."""
     if isinstance(data, list):
         return [d for d in data if isinstance(d, dict)]
     if isinstance(data, dict):
@@ -1451,7 +1326,6 @@ def _extract_job_list_from_api(data) -> list:
             v = data.get(wrap)
             if isinstance(v, list) and v and isinstance(v[0], dict):
                 return v
-            # one level deeper: {"data": {"jobs": [...]}}
             if isinstance(v, dict):
                 for wrap2 in ("jobs", "results", "items", "content", "docs", "data"):
                     vv = v.get(wrap2)
@@ -1463,7 +1337,6 @@ def _extract_job_list_from_api(data) -> list:
     return []
 
 def _norm_ethiojobs_url(href: str) -> str:
-    """Canonicalise a detail URL to https://ethiojobs.net/job/<token>-<slug>."""
     if not href:
         return ""
     if href.startswith("http"):
@@ -1472,7 +1345,6 @@ def _norm_ethiojobs_url(href: str) -> str:
     return urlunsplit(("https", "ethiojobs.net", "/" + href.lstrip("/").rstrip("/"), "", ""))
 
 def _job_url_from_record(rec: dict) -> str:
-    """Build the public ethiojobs.net/job/<...> URL for a record, for dedup + apply."""
     slug = _pick(rec, "slug")
     if slug:
         if slug.startswith("http") or slug.startswith("/job"):
@@ -1486,7 +1358,7 @@ def _job_url_from_record(rec: dict) -> str:
     return ""
 
 # ---------------------------------------------------------------------------
-# API DISCOVERY — read the site's JS bundles to find base + routes, then probe
+# API DISCOVERY
 # ---------------------------------------------------------------------------
 
 _JS_SRC_RE   = re.compile(r'(?:src|href)="(/_next/[^"]+\.js)"', re.I)
@@ -1507,8 +1379,15 @@ def _save_api_cache(d: dict):
     except Exception as e:
         log_.warning(f"Could not write API cache: {e}")
 
+def _clear_api_cache():
+    try:
+        if os.path.exists(API_CACHE_FILE):
+            os.remove(API_CACHE_FILE)
+            log_.info(f"Cleared stale API cache: {API_CACHE_FILE}")
+    except Exception as e:
+        log_.warning(f"Could not clear API cache: {e}")
+
 def _scan_js_for_api(seed_url: str):
-    """Download the SPA's JS bundles and pull out the API base + route fragments."""
     bases, paths = set(), set()
     try:
         r = SESSION.get(seed_url, timeout=REQUEST_TIMEOUT)
@@ -1523,7 +1402,7 @@ def _scan_js_for_api(seed_url: str):
     js_urls = []
     for src in _JS_SRC_RE.findall(html):
         js_urls.append(urljoin(BASE_URL + "/", src))
-    # De-dup, cap the number of bundles we fetch.
+
     seen = set()
     for ju in js_urls:
         if ju in seen:
@@ -1543,80 +1422,123 @@ def _scan_js_for_api(seed_url: str):
     return bases, paths
 
 def _probe_list_endpoint(base: str, path: str) -> bool:
-    """True if GET base+path (with common paging params) returns job JSON."""
+    """True if GET base+path returns job JSON. Tries several paging param styles."""
+    # Normalise: one slash between base and path
     url = base.rstrip("/") + "/" + path.lstrip("/")
-    for params in ({"page": 1, "limit": PAGE_SIZE},
-                   {"page": 1, "pageSize": PAGE_SIZE},
-                   {"offset": 0, "limit": PAGE_SIZE},
-                   {}):
+    param_sets = [
+        {"page": 1, "limit": PAGE_SIZE},
+        {"page": 1, "pageSize": PAGE_SIZE},
+        {"page": 1, "perPage": PAGE_SIZE},
+        {"page": 0, "limit": PAGE_SIZE},
+        {"offset": 0, "limit": PAGE_SIZE},
+        {"p": 1, "size": PAGE_SIZE},
+        {},
+    ]
+    for params in param_sets:
         try:
             r = API_SESSION.get(url, params=params, timeout=REQUEST_TIMEOUT)
-            if r.status_code != 200 or "json" not in r.headers.get("content-type", ""):
+            ct = r.headers.get("content-type", "")
+            if r.status_code != 200 or "json" not in ct:
                 continue
             data = r.json()
         except Exception:
             continue
         if _extract_job_list_from_api(data):
+            log_.debug(f"  probe OK: {url} params={params}")
             return True
     return False
 
+def _probe_and_log(base: str, path: str) -> bool:
+    """Wrapper that logs each probe attempt at DEBUG level."""
+    url = base.rstrip("/") + "/" + path.lstrip("/")
+    log_.debug(f"  probing: {url}")
+    result = _probe_list_endpoint(base, path)
+    if result:
+        log(C_GREEN(f"  ✓ working endpoint: {url}"))
+    return result
+
 def discover_api(force: bool = False) -> dict:
     """
-    Resolve {"base","list","detail"} for the EthioJobs JSON API. Order:
-      1) cached values (unless force)
-      2) explicit env overrides (ETHIOJOBS_API_BASE + first probed list path)
-      3) bases/paths scraped from the site's JS bundles, then probed
-      4) the built-in candidate lists, probed
-    The working combination is cached to API_CACHE_FILE.
+    Resolve {base, list, detail} for the EthioJobs JSON API.
+
+    Priority order:
+      1) Cached result — but only if the cached endpoint still responds
+         (stale cache from a failed previous run is cleared automatically)
+      2) JS-bundle scan: bases/paths extracted from the live site JS
+      3) Configured candidate lists (API_LIST_PATHS env var / defaults)
+
+    The working result is written to API_CACHE_FILE for the next run.
     """
     if not force:
         cached = _load_api_cache()
         if cached.get("base") and cached.get("list"):
-            return cached
+            if _probe_list_endpoint(cached["base"], cached["list"]):
+                log_.info(f"Using cached API: {cached['base']}{cached['list']}")
+                return cached
+            else:
+                log(C_DIM("  Cached API endpoint no longer responds — re-discovering"))
+                _clear_api_cache()
 
     log(C_BLUE("\n  Discovering EthioJobs API endpoints …"))
 
-    # Gather candidate bases.
+    # ── Step 1: gather candidate bases ──────────────────────────────────────
     bases = []
     if API_BASE:
         bases.append(API_BASE.rstrip("/"))
+
     scanned_bases, scanned_paths = _scan_js_for_api(JOBS_URL)
+
     for b in scanned_bases:
         if b not in bases:
             bases.append(b)
-    # Fallbacks if JS scan found nothing.
-    for b in ("https://api.ethiojobs.net", "https://ethiojobs.net/api"):
+
+    # Hard-coded fallbacks
+    for b in ("https://api.ethiojobs.net", "https://ethiojobs.net/api",
+              "https://backend.ethiojobs.net", "https://jobs.ethiojobs.net"):
         if b not in bases:
             bases.append(b)
 
-    # Candidate list paths: scanned first, then configured.
+    # ── Step 2: build ordered candidate path list ────────────────────────────
+    # Scanned paths come first; configured paths fill in the rest.
+    # Filter out paths that clearly aren't listing endpoints (auth, counts, etc.)
+    _SKIP_PATH_FRAGMENTS = ("count", "application", "login", "register",
+                             "profile", "user", "auth", "token", "search/suggest")
+
     list_candidates = []
+
     for p in scanned_paths:
-        if "{" not in p and p not in list_candidates:
+        if "{" in p:
+            continue
+        if any(frag in p.lower() for frag in _SKIP_PATH_FRAGMENTS):
+            continue
+        if p not in list_candidates:
             list_candidates.append(p)
+
     for p in API_LIST_PATHS:
         if p not in list_candidates:
             list_candidates.append(p)
 
+    log(C_DIM(f"  Bases to probe  : {bases}"))
+    log(C_DIM(f"  Paths to probe  : {list_candidates}"))
+
+    # ── Step 3: probe ────────────────────────────────────────────────────────
     found = {}
     for base in bases:
         for path in list_candidates:
-            if _probe_list_endpoint(base, path):
+            if _probe_and_log(base, path):
                 found["base"] = base
                 found["list"] = path
-                log(C_GREEN(f"  ✓ list endpoint: {base}{path}"))
                 break
         if found:
             break
 
     if not found:
         log(C_RED("  Could not auto-discover a working list endpoint."))
-        log(C_DIM("  Set ETHIOJOBS_API_BASE / ETHIOJOBS_API_LIST_PATHS, or run --discover"))
-        log(C_DIM(f"  JS-scanned bases: {sorted(scanned_bases) or '—'}"))
-        log(C_DIM(f"  JS-scanned paths: {sorted(scanned_paths) or '—'}"))
+        log(C_DIM("  Hint: set ETHIOJOBS_API_LIST_PATHS to override, or run --discover"))
+        log(C_DIM(f"  JS-scanned bases : {sorted(scanned_bases) or '—'}"))
+        log(C_DIM(f"  JS-scanned paths : {sorted(scanned_paths) or '—'}"))
         return {}
 
-    # Detail endpoint: keep the configured candidates (filled per-job at runtime).
     found["detail"] = API_DETAIL_PATHS
     _save_api_cache(found)
     return found
@@ -1626,14 +1548,20 @@ def discover_api(force: bool = False) -> dict:
 # ---------------------------------------------------------------------------
 
 def _fetch_list_page(base: str, path: str, page: int) -> list:
-    """Fetch one listing page; return its job-record dicts (possibly empty)."""
     url = base.rstrip("/") + "/" + path.lstrip("/")
-    for params in ({"page": page, "limit": PAGE_SIZE},
-                   {"page": page, "pageSize": PAGE_SIZE},
-                   {"offset": (page - 1) * PAGE_SIZE, "limit": PAGE_SIZE}):
+    param_sets = [
+        {"page": page, "limit": PAGE_SIZE},
+        {"page": page, "pageSize": PAGE_SIZE},
+        {"page": page, "perPage": PAGE_SIZE},
+        {"page": page - 1, "limit": PAGE_SIZE},   # some APIs are 0-indexed
+        {"offset": (page - 1) * PAGE_SIZE, "limit": PAGE_SIZE},
+        {"p": page, "size": PAGE_SIZE},
+    ]
+    for params in param_sets:
         try:
             r = API_SESSION.get(url, params=params, timeout=REQUEST_TIMEOUT)
-            if r.status_code != 200 or "json" not in r.headers.get("content-type", ""):
+            ct = r.headers.get("content-type", "")
+            if r.status_code != 200 or "json" not in ct:
                 continue
             recs = _extract_job_list_from_api(r.json())
             if recs:
@@ -1643,11 +1571,6 @@ def _fetch_list_page(base: str, path: str, page: int) -> list:
     return []
 
 def collect_job_records(api: dict, listing_label: str = "") -> list:
-    """
-    Page through the listing API and return raw job-record dicts, de-duplicated
-    by their derived public job URL. MAX_PAGES caps the walk; we stop early when
-    a page returns nothing or no new records.
-    """
     base, path = api["base"], api["list"]
     print(C_BLUE(f"\n  Collecting jobs from API: {base}{path}"))
     seen, ordered = set(), []
@@ -1677,10 +1600,6 @@ def collect_job_records(api: dict, listing_label: str = "") -> list:
 # ---------------------------------------------------------------------------
 
 def _fetch_detail_record(api: dict, rec: dict) -> dict:
-    """
-    If the listing record lacks a body, fetch the per-job detail endpoint to get
-    the full description / how-to-apply. Returns the richest dict available.
-    """
     has_body = bool(_pick(rec, "description")) and len(_pick(rec, "description")) > 120
     jid = _pick(rec, "id")
     if has_body or not jid:
@@ -1692,7 +1611,8 @@ def _fetch_detail_record(api: dict, rec: dict) -> dict:
         url  = base.rstrip("/") + "/" + path.lstrip("/")
         try:
             r = API_SESSION.get(url, timeout=REQUEST_TIMEOUT)
-            if r.status_code != 200 or "json" not in r.headers.get("content-type", ""):
+            ct = r.headers.get("content-type", "")
+            if r.status_code != 200 or "json" not in ct:
                 continue
             data = r.json()
         except Exception:
@@ -1700,7 +1620,7 @@ def _fetch_detail_record(api: dict, rec: dict) -> dict:
         recs = _extract_job_list_from_api(data)
         if recs:
             merged = dict(rec)
-            merged.update(recs[0])      # detail fields win
+            merged.update(recs[0])
             return merged
         if isinstance(data, dict) and _is_job_api_response(data):
             merged = dict(rec)
@@ -1709,7 +1629,6 @@ def _fetch_detail_record(api: dict, rec: dict) -> dict:
     return rec
 
 def _map_job_record(data: dict, job_url: str) -> dict:
-    """Resolve an API job dict to our canonical raw_job output dict."""
     title        = clean_title(_pick(data, "title"))
     company      = sanitize_text(_pick(data, "company")) or "EthioJobs Employer"
     company_url  = sanitize_text(_pick(data, "company_url"),     is_url=True)
@@ -1738,7 +1657,6 @@ def _map_job_record(data: dict, job_url: str) -> dict:
     req_raw   = _pick(data, "requirements")
     apply_raw = _pick(data, "how_to_apply")
 
-    # Description may be HTML — render to readable text.
     def _maybe_html(s):
         if s and ("<" in s and ">" in s):
             return html_block_to_text(BeautifulSoup(s, "lxml"))
@@ -1756,7 +1674,6 @@ def _map_job_record(data: dict, job_url: str) -> dict:
     cat_raw   = _pick(data, "category")
     job_field = infer_field(title, description, cat_raw)
 
-    # Experience: API career level wins; else extract from requirements/body.
     career_level_raw = _pick(data, "career_level")
     experience_band  = _career_level_to_band(career_level_raw)
     if not experience_band:
@@ -1764,7 +1681,6 @@ def _map_job_record(data: dict, job_url: str) -> dict:
 
     qualification = extract_qualification(_maybe_html(req_raw) or description)
 
-    # Apply target: explicit API fields, then body scan, then policy opt-in.
     apply_email, apply_url = "", ""
     api_email = _pick(data, "apply_email")
     api_url   = _pick(data, "apply_url")
@@ -1816,17 +1732,12 @@ def _map_job_record(data: dict, job_url: str) -> dict:
     }
 
 def scrape_job_detail(rec, api: dict = None) -> dict:
-    """
-    Turn a listing API record into a normalised raw_job dict, fetching the detail
-    endpoint first if the body is missing. `rec` is the listing record (dict).
-    """
     if not isinstance(rec, dict):
         raise ValueError("scrape_job_detail expects an API job record dict")
     job_url = _job_url_from_record(rec)
     full    = _fetch_detail_record(api, rec) if api else rec
     return _map_job_record(full, job_url)
 
-# --- one-shot --inspect: print the raw API record for the first job ----------
 def inspect_first_job(api: dict):
     recs = _fetch_list_page(api["base"], api["list"], 1)
     if not recs:
@@ -1849,19 +1760,13 @@ def inspect_first_job(api: dict):
 # =============================================================================
 
 def process_job(raw_job: dict, processed_ids: set, processed_urls: set, seen_content: set):
-    """
-    Returns (status, job_dict_or_None):
-        ("duplicate", None) — already processed / seen this run
-        ("flagged",   None) — failed public-apply rule, written to flagged CSV
-        ("ok",        dict) — ready to post to WordPress
-    """
     job_url  = raw_job.get("job_url", "")
     title    = raw_job.get("title", "")
     company  = raw_job.get("company_name", "")
     location = raw_job.get("location", "")
 
     if not title:
-        return "duplicate", None  # nothing usable
+        return "duplicate", None
 
     job_id = make_job_id(job_url, title, company)
 
@@ -1875,7 +1780,6 @@ def process_job(raw_job: dict, processed_ids: set, processed_urls: set, seen_con
         return "duplicate", None
     seen_content.add(fingerprint)
 
-    # ---- Public-apply rule -------------------------------------------------
     apply_email = raw_job.get("apply_email", "")
     apply_url   = raw_job.get("apply_url", "")
     qualifies   = bool(apply_email) or bool(apply_url)
@@ -1888,7 +1792,6 @@ def process_job(raw_job: dict, processed_ids: set, processed_urls: set, seen_con
         log(C_RED(f"  FLAGGED (no public apply) — {title}"))
         return "flagged", None
 
-    # Record on scrape — before paraphrasing or posting.
     mark_scraped(job_id, job_url, title, company)
     processed_ids.add(job_id)
     processed_urls.add(job_url)
@@ -1978,7 +1881,7 @@ def print_job_verbose(index, job):
     print(C_DIVIDER())
 
 # =============================================================================
-#  EXCEL SAVE (standardized column order)
+#  EXCEL SAVE
 # =============================================================================
 
 EXCEL_HEADERS = [
@@ -2021,7 +1924,12 @@ def main():
                         help="Discover + print the API endpoints, then exit.")
     parser.add_argument("--inspect", action="store_true",
                         help="Print the raw + mapped record for the first job, then exit.")
+    parser.add_argument("--force-discover", action="store_true",
+                        help="Delete cached API endpoints and re-discover from scratch.")
     args = parser.parse_args()
+
+    if args.force_discover:
+        _clear_api_cache()
 
     start_time = datetime.now()
 
@@ -2042,10 +1950,11 @@ def main():
     print(f"  Started         : {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(C_HEADER("=" * 80))
 
-    # Resolve the JSON API (cached after first success).
-    api = discover_api(force=args.discover)
+    api = discover_api(force=args.discover or args.force_discover)
     if not api:
         log(C_RED("  Could not resolve the EthioJobs API — aborting."))
+        log(C_DIM("  Try: python et.py --force-discover"))
+        log(C_DIM("  Or set: ETHIOJOBS_API_LIST_PATHS env var with candidate paths"))
         sys.exit(2)
 
     if args.discover:
@@ -2064,7 +1973,6 @@ def main():
     processed_ids, processed_urls = load_processed_ids()
     print(f"  Tracker loaded: {len(processed_ids)} previously processed job IDs")
 
-    # Step 1: collect job records from the listing API (all configured listings).
     try:
         records = []
         seen_keys = set()
@@ -2093,7 +2001,6 @@ def main():
 
     for rec in records:
         link = _job_url_from_record(rec)
-        # Skip detail fetch entirely if URL already processed.
         if link and link in processed_urls:
             dup_count += 1
             log(C_DIM(f"  Already processed (tracker) — skipped: {link}"))
