@@ -1,34 +1,81 @@
 name: Scraper
+
 on:
   schedule:
-    - cron: "0 */2 * * *"
-  workflow_dispatch:
+    - cron: "0 */2 * * *"     # daily 06:00 UTC = 09:00 EAT (Ethiopia) / 08:00 CAT (Lusaka)
+  workflow_dispatch:          # manual "Run workflow" button
+    inputs:
+      inspect_url:
+        description: 'Set a job URL to run --inspect (canary) instead of a full scrape'
+        required: false
+        default: ''
+
+# Cancel an in-flight run if a new one starts, so trackers never race.
+concurrency:
+  group: ethiojobs-scraper
+  cancel-in-progress: false
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 60       # lower this, or set MAX_JOBS below, to cap a run
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-          cache: "pip"
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+          python-version: '3.12'
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt   # make sure 'playwright' is listed here
+
+      - name: Install Chromium + system libs
+        run: playwright install --with-deps chromium   # --with-deps apt-installs the libs
+
+      # Persist the dedup tracker across runs. Without this the runner starts
+      # clean every time, so every scheduled run would re-scrape AND re-paraphrase
+      # every job (Mistral cost) — the WP slug check still blocks duplicate POSTS,
+      # but you'd burn time and API calls for nothing. The rolling-cache pattern
+      # (unique key + prefix restore-keys) keeps the latest tracker.
+      - name: Restore tracker
+        uses: actions/cache@v4
+        with:
+          path: |
+            ethiojobs_ethiopia_processed.csv
+            ethiojobs_ethiopia_flagged.csv
+          key: ethiojobs-tracker-${{ github.run_id }}
+          restore-keys: |
+            ethiojobs-tracker-
+
       - name: Run scraper
         env:
-          MISTRAL_API_KEY:  ${{ secrets.MISTRAL_API_KEY }}
+          # --- secrets (add these under Settings → Secrets → Actions) ---
+          WP_BASE_URL:      ${{ secrets.WP_BASE_URL }}
           WP_USERNAME:      ${{ secrets.WP_USERNAME }}
           WP_APP_PASSWORD:  ${{ secrets.WP_APP_PASSWORD }}
-          WP_BASE_URL:      ${{ secrets.WP_BASE_URL }}
-        run: python et.py
-      - name: Upload Excel output as artifact
+          MISTRAL_API_KEY:  ${{ secrets.MISTRAL_API_KEY }}
+          # --- behaviour ---
+          HEADLESS: '1'
+          APPLY_VIA_SOURCE_URL: '0'   # '1' to treat the EthioJobs page itself as the apply URL
+          # MAX_JOBS: '50'            # uncomment to cap a run while testing
+          # ETHIOJOBS_LISTING_URLS: 'https://ethiojobs.net/jobs'
+          INSPECT_URL: ${{ github.event.inputs.inspect_url }}
+        run: |
+          if [ -n "$INSPECT_URL" ]; then
+            python et.py --inspect "$INSPECT_URL"
+          else
+            python et.py
+          fi
+
+      # Grab the run's outputs so you can inspect results / the flagged CSV.
+      - name: Upload outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: jobs-output-${{ github.run_id }}
+          name: ethiojobs-output
           path: |
-            jobs_output.xlsx
-            processed_jobs.csv
-          retention-days: 7
+            ethiojobs_ethiopia_jobs.xlsx
+            ethiojobs_ethiopia_flagged.csv
+          if-no-files-found: ignore
