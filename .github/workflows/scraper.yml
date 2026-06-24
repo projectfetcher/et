@@ -1,0 +1,34 @@
+name: Scraper
+on:
+  schedule:
+    - cron: "0 */2 * * *"
+  workflow_dispatch:
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run scraper
+        env:
+          MISTRAL_API_KEY:  ${{ secrets.MISTRAL_API_KEY }}
+          WP_USERNAME:      ${{ secrets.WP_USERNAME }}
+          WP_APP_PASSWORD:  ${{ secrets.WP_APP_PASSWORD }}
+          WP_BASE_URL:      ${{ secrets.WP_BASE_URL }}
+        run: python et.py
+      - name: Upload Excel output as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jobs-output-${{ github.run_id }}
+          path: |
+            jobs_output.xlsx
+            processed_jobs.csv
+          retention-days: 7
