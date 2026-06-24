@@ -6,3 +6,4 @@ pandas>=2.0.0
 sentence-transformers>=2.7.0
 language-tool-python==2.7.1
 nltk>=3.8.0
+playwright>=1.44.0
