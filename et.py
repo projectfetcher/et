@@ -39,47 +39,41 @@ except ImportError:
 # =============================================================================
 #  CONFIG
 # =============================================================================
+#
+#  SOURCE
+#  ------
+#  https://jobwebethiopia.com/
+#
+#  JobWebEthiopia is a JobRoller-based WordPress job board. The archive lives at
+#  /jobs/ and paginates as /jobs/page/N/. Each listing is a full detail page at
+#  /jobs/<slug>/. The site obfuscates email addresses via Cloudflare's
+#  email-protection CDN script — the scraper decodes these automatically.
+#
+#  APPLY RULE (hard, network-wide)
+#  --------------------------------
+#  A job only posts if it exposes a PUBLIC apply path: an email or an external
+#  apply URL found in the "Method of Application" section. The on-page upload
+#  form (Name / Email / Message / Upload resumé) is treated as a login-gated
+#  fallback and is NEVER the apply destination.
+#  REQUIRE_PUBLIC_APPLY (default "1") enforces this; set to "0" to post all.
+# =============================================================================
 
-BASE_URL = "https://ethiojobs.net"
-
-JOBS_URL  = os.environ.get("ETHIOJOBS_JOBS_URL", "https://ethiojobs.net/jobs")
-LISTING_URLS = [u.strip() for u in
-                os.environ.get("ETHIOJOBS_LISTING_URLS", JOBS_URL).split(",") if u.strip()]
-
-API_BASE         = os.environ.get("ETHIOJOBS_API_BASE", "https://api.ethiojobs.net")
-API_LIST_PATHS   = [p.strip() for p in os.environ.get(
-    "ETHIOJOBS_API_LIST_PATHS",
-    # Expanded candidate list — /api/job-board/ prefix discovered from JS scan
-    "/api/job-board/jobs,/api/job-board/vacancies,/api/job-board/active-jobs,"
-    "/api/job-board/job-listings,/api/job-board/listing,"
-    "/api/jobs/search,/api/jobs/list,/api/jobs,"
-    "/api/job/search,/api/job/list,/api/job,"
-    "/api/vacancy/search,/api/vacancies,"
-    "/job/search,/jobs/search,/job/list,/jobs,/job,/vacancy/search,/vacancies"
-).split(",") if p.strip()]
-API_DETAIL_PATHS = [p.strip() for p in os.environ.get(
-    "ETHIOJOBS_API_DETAIL_PATHS",
-    "/api/job-board/jobs/{id},/api/jobs/{id},/api/job/{id},"
-    "/job/{id},/jobs/{id},/vacancy/{id},/job/detail/{id},/job/get/{id}"
-).split(",") if p.strip()]
-API_CACHE_FILE   = os.environ.get("ETHIOJOBS_API_CACHE", "ethiojobs_api_cache.json")
+BASE_URL = "https://jobwebethiopia.com"
+JOBS_URL = os.environ.get("JOBWEB_JOBS_URL", "https://jobwebethiopia.com/jobs/")
 
 REQUIRE_PUBLIC_APPLY = os.environ.get("REQUIRE_PUBLIC_APPLY", "1") != "0"
-APPLY_VIA_SOURCE_URL = os.environ.get("APPLY_VIA_SOURCE_URL", "0") == "1"
 
 REQUEST_DELAY   = float(os.environ.get("REQUEST_DELAY", "1.0"))
-MAX_JOBS        = int(os.environ.get("MAX_JOBS", "0"))
-MAX_PAGES       = int(os.environ.get("MAX_PAGES", "50"))
-PAGE_SIZE       = int(os.environ.get("PAGE_SIZE", "20"))
+MAX_JOBS        = int(os.environ.get("MAX_JOBS", "0"))    # 0 = unlimited
+MAX_PAGES       = int(os.environ.get("MAX_PAGES", "20"))  # archive pagination cap
 REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", "25"))
 
-OUTPUT_FILE        = "ethiojobs_ethiopia_jobs.xlsx"
-PROCESSED_IDS_FILE = "ethiojobs_ethiopia_processed.csv"
-FLAGGED_FILE       = "ethiojobs_ethiopia_flagged.csv"
+OUTPUT_FILE        = "jobwebethiopia_jobs.xlsx"
+PROCESSED_IDS_FILE = "jobwebethiopia_processed.csv"
+FLAGGED_FILE       = "jobwebethiopia_flagged.csv"
 
 _TRACKER_FIELDS = ["Job ID", "Job URL", "Job Title", "Company Name",
                    "Status", "Timestamp", "WP ID"]
-
 _FLAGGED_FIELDS = ["Source", "Title", "Company", "Location", "Salary",
                    "Deadline", "Reason", "Apply Note", "Job URL", "Timestamp"]
 
@@ -115,6 +109,7 @@ JOB_TYPE_MAPPING = {
     "contract":  "contract",  "temporary": "temporary",
     "internship":"internship","freelance": "freelance",
     "volunteer": "volunteer", "permanent": "full-time",
+    "full-timer":"full-time", "full timer": "full-time",
 }
 
 HEADERS = {
@@ -129,51 +124,35 @@ HEADERS = {
 SESSION = requests.Session()
 SESSION.headers.update(HEADERS)
 
+# Ethiopian cities / regions for location fallback.
 ETHIOPIA_LOCATIONS = [
-    "Addis Ababa", "Adama", "Nazret", "Dire Dawa", "Mekelle", "Mekele",
-    "Bahir Dar", "Hawassa", "Awassa", "Gondar", "Jimma", "Dessie", "Jijiga",
-    "Shashamane", "Bishoftu", "Debre Birhan", "Sodo", "Arba Minch", "Hosaena",
-    "Harar", "Dilla", "Nekemte", "Debre Markos", "Asella", "Ambo", "Woldia",
-    "Gambela", "Assosa", "Semera", "Adigrat", "Axum", "Shire", "Sebeta",
-    "Burayu", "Gelan", "Modjo", "Mojo", "Ziway", "Batu", "Bule Hora",
-    "Oromia", "Amhara", "Tigray", "Sidama", "Afar", "Somali", "Benishangul",
-    "SNNPR", "Gambella", "Dukem", "Holeta",
+    "Addis Ababa", "Adama", "Dire Dawa", "Gondar", "Mekelle", "Hawassa",
+    "Bahir Dar", "Dessie", "Jimma", "Jijiga", "Shashamane", "Bishoftu",
+    "Sodo", "Arba Minch", "Hosaena", "Harar", "Dilla", "Nekemte",
+    "Debre Berhan", "Assosa", "Gambela", "Semera", "Logia", "Axum",
+    "Lalibela", "Bole", "Akaki", "Combolcha", "Woliso", "Ambo",
+    "Debre Markos", "Arsi", "Amhara", "Oromia", "SNNPR", "Tigray",
+    "Somali", "Afar", "Benishangul Gumuz", "Sidama", "Southwest Ethiopia",
 ]
-DEFAULT_LOCATION = os.environ.get("ETHIOJOBS_DEFAULT_LOCATION", "Ethiopia")
+DEFAULT_LOCATION = os.environ.get("JOBWEB_DEFAULT_LOCATION", "Ethiopia")
 
+# Hosts that are never a real external apply destination.
 _NON_APPLY_HOST_SUBSTR = (
-    "ethiojobs.net", "ethiojobs.org", "ethiojobs.com", "dereja.com",
-    "facebook.", "twitter.", "x.com", "linkedin.",
+    "jobwebethiopia.com", "facebook.", "twitter.", "x.com", "linkedin.",
     "instagram.", "wa.me", "whatsapp", "t.me", "telegram",
-    "plus.google", "pinterest.", "youtube.", "tiktok.",
+    "plus.google", "pinterest.", "youtube.",
 )
 _NON_APPLY_PATH_SUBSTR = (
-    "/login", "/signin", "/sign-in", "/register", "/signup", "/sign-up",
-    "action=login", "mode=register", "#share", "/share",
-    "/cart", "/checkout", "/account",
+    "/wp-login", "/submit-job", "/register", "/my-dashboard",
+    "/lists/", "#", "/cart", "/checkout", "action=login",
 )
-_NON_APPLY_EMAIL_DOMAINS = ("ethiojobs.net", "ethiojobs.org", "dereja.com")
+_NON_APPLY_EMAIL_DOMAINS = ("jobwebethiopia.com", "jobwebzambia.com")
 
 def _is_real_apply_email(email: str) -> bool:
     if not email or "@" not in email:
         return False
     dom = email.rsplit("@", 1)[-1].lower()
     return not any(dom == d or dom.endswith("." + d) for d in _NON_APPLY_EMAIL_DOMAINS)
-
-def _is_real_apply_url(url: str) -> bool:
-    if not url or not url.startswith("http"):
-        return False
-    try:
-        p = urlsplit(url)
-        host = p.netloc.lower()
-        path = p.path.lower()
-        if any(s in host for s in _NON_APPLY_HOST_SUBSTR):
-            return False
-        if any(s in path for s in _NON_APPLY_PATH_SUBSTR):
-            return False
-        return True
-    except Exception:
-        return False
 
 # =============================================================================
 #  LOGGING / COLOUR
@@ -214,18 +193,18 @@ MONTHS = {
     "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
 }
 
+# "23 Jun 2026" or "23/Jun/2026" — used in listing cards and detail header.
 TEXT_DATE_RE = re.compile(
-    r"(\d{1,2})\s*(?:st|nd|rd|th)?\s+([A-Za-z]+)\s*[.,]?\s*(\d{4})", re.I
+    r"(\d{1,2})\s*(?:st|nd|rd|th)?\s*[/\s,]\s*([A-Za-z]+)\s*[/,]?\s*(\d{4})", re.I
 )
+# Numeric DD/MM/YYYY or DD-MM-YYYY.
 DMY_DATE_RE = re.compile(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b")
-MDY_TEXT_DATE_RE = re.compile(
-    r"([A-Za-z]{3,9})\s+(\d{1,2})\s*(?:st|nd|rd|th)?\s*[,/]?\s*(\d{4})", re.I
-)
-ISO_DATE_RE = re.compile(r"(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)")
 
 DEADLINE_LABELS = ("application deadline", "closing date", "deadline",
-                   "expiry date", "expires")
+                   "expiry date", "expires", "application closing date",
+                   "closing date for application", "last date")
 
+# Body headings that introduce application instructions.
 _APPLY_HEAD_PHRASES = re.compile(
     r"^(?:how\s*(?:and|&)\s*deadline\s*to\s*apply|how\s*to\s*apply(?:\s*(?:and|&)\s*deadline)?|"
     r"how\s*to\s*submit|to\s*apply|application\s*(?:and|&)\s*deadline|"
@@ -238,16 +217,19 @@ _APPLY_HEAD_PHRASES = re.compile(
 _BODY_CUT_MARKERS = [
     "related jobs", "leave your thoughts", "you must be logged in",
     "email me jobs like these", "send to a friend", "company information",
-    "leave a reply", "post a comment",
+    "leave a reply", "post a comment", "never miss a job update",
+    "subscribe", "apply for this job", "upload resumé", "upload cover letter",
 ]
 _BODY_DROP_LINES = {
     "apply for this job", "save", "share", "share:", "bookmark job",
     "quick view", "send to friend", "send to a friend", "clear all",
-    "filter", "view more",
+    "filter", "view more", "name *", "email *", "message *",
+    'is fire "hot" or "cold"?', "upload resumé (pdf, doc, docx, zip, txt, rtf)",
+    "upload cover letter (pdf, doc, docx, zip, txt, rtf)",
 }
 
 # =============================================================================
-#  TEXT CLEANUP / SANITIZATION
+#  TEXT CLEANUP
 # =============================================================================
 
 _MOJIBAKE = [
@@ -280,12 +262,6 @@ def clean_text(el):
         return ""
     return re.sub(r"\s+", " ", el.get_text(" ", strip=True)).strip()
 
-def extract_email(text):
-    if not text:
-        return ""
-    m = EMAIL_PATTERN.search(text)
-    return m.group(0) if m else ""
-
 def strip_tracking_params(url):
     if not url:
         return url
@@ -302,7 +278,49 @@ def strip_tracking_params(url):
     return urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
 
 # =============================================================================
-#  BASIC HTTP / PARSING HELPERS
+#  CLOUDFLARE EMAIL DECODE
+# =============================================================================
+# JobWebEthiopia uses Cloudflare's /cdn-cgi/l/email-protection obfuscation.
+# The encoded value is the hex string in the href after '#', decoded by XOR with
+# the first byte as key. We replicate this server-side.
+
+def _cf_decode_email(encoded: str) -> str:
+    """Decode a Cloudflare-obfuscated email hex string."""
+    try:
+        data = bytes.fromhex(encoded)
+        key  = data[0]
+        return "".join(chr(b ^ key) for b in data[1:])
+    except Exception:
+        return ""
+
+def _extract_cf_email(tag) -> str:
+    """Return decoded email from a Cloudflare protection <a> tag."""
+    if tag is None:
+        return ""
+    href = tag.get("href", "")
+    # href="/cdn-cgi/l/email-protection#<hex>" or data-cfemail="<hex>"
+    cf_data = tag.get("data-cfemail", "")
+    if not cf_data:
+        m = re.search(r"email-protection#([0-9a-fA-F]+)", href)
+        if m:
+            cf_data = m.group(1)
+    if cf_data:
+        return _cf_decode_email(cf_data)
+    # Fallback: readable text in the tag (sometimes already decoded in HTML)
+    text = tag.get_text(" ", strip=True)
+    if "@" in text:
+        return text.strip()
+    return ""
+
+def decode_all_cf_emails(soup):
+    """Replace all Cloudflare-obfuscated email anchors in soup with plain text."""
+    for a in soup.find_all("a", href=re.compile(r"email-protection")):
+        decoded = _extract_cf_email(a)
+        if decoded:
+            a.replace_with(decoded)
+
+# =============================================================================
+#  HTTP / PARSING HELPERS
 # =============================================================================
 
 def get_soup(url):
@@ -310,9 +328,11 @@ def get_soup(url):
     resp.raise_for_status()
     resp.encoding = resp.encoding or "utf-8"
     try:
-        return BeautifulSoup(resp.text, "lxml")
+        soup = BeautifulSoup(resp.text, "lxml")
     except Exception:
-        return BeautifulSoup(resp.text, "html.parser")
+        soup = BeautifulSoup(resp.text, "html.parser")
+    decode_all_cf_emails(soup)
+    return soup
 
 def slugify(text, maxlen=80):
     s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
@@ -337,7 +357,7 @@ def html_block_to_text(el) -> str:
     return text.strip()
 
 # =============================================================================
-#  DATE / FIELD EXTRACTORS
+#  DATE EXTRACTORS
 # =============================================================================
 
 def dmy_dates(text: str) -> list:
@@ -361,38 +381,19 @@ def text_dates(text: str) -> list:
             pass
     return out
 
-def mdy_text_dates(text: str) -> list:
-    out = []
-    for mon, d, y in MDY_TEXT_DATE_RE.findall(text or ""):
-        month = MONTHS.get(mon.lower())
-        if not month:
-            continue
-        try:
-            out.append(datetime(int(y), month, int(d)).strftime("%Y-%m-%d"))
-        except ValueError:
-            pass
-    return out
-
-def iso_dates(text: str) -> list:
-    out = []
-    for y, m, d in ISO_DATE_RE.findall(text or ""):
-        try:
-            out.append(datetime(int(y), int(m), int(d)).strftime("%Y-%m-%d"))
-        except ValueError:
-            pass
-    return out
-
 def parse_any_date(text: str) -> str:
-    for fn in (iso_dates, mdy_text_dates, text_dates, dmy_dates):
-        ds = fn(text)
-        if ds:
-            return ds[-1]
-    return ""
+    ds = dmy_dates(text)
+    if ds:
+        return ds[-1]
+    ts = text_dates(text)
+    return ts[-1] if ts else ""
 
 def clean_title(raw: str) -> str:
     t = sanitize_text(raw)
+    # Strip trailing " at COMPANY" if the H1 already includes it — JobRoller
+    # sometimes appends it in the page title but not the H1, so check first.
+    t = re.sub(r"\s+at\s+.+$", "", t, flags=re.I) if " at " in t.lower() else t
     t = re.sub(r"\s*\d[\d,]*\s*views?\s*$", "", t, flags=re.I)
-    t = re.sub(r"\s*views?\s*$", "", t, flags=re.I)
     return t.strip()
 
 def map_job_type(raw: str) -> str:
@@ -409,41 +410,26 @@ def pick_location(locations: list) -> str:
 
 def location_from_text(text: str) -> str:
     if text:
-        for town in ETHIOPIA_LOCATIONS:
-            if re.search(rf"\b{re.escape(town)}\b", text, re.I):
-                if town.lower() == "mekele":   return "Mekelle"
-                if town.lower() == "nazret":   return "Adama"
-                if town.lower() == "awassa":   return "Hawassa"
-                if town.lower() == "mojo":     return "Modjo"
-                if town.lower() == "batu":     return "Ziway"
-                return town
+        for city in ETHIOPIA_LOCATIONS:
+            if re.search(rf"\b{re.escape(city)}\b", text, re.I):
+                return city
     return DEFAULT_LOCATION
-
-def extract_experience(qual_text: str) -> str:
-    if not qual_text:
-        return ""
-    m = re.search(r"(?:at least|minimum(?: of)?)\s+\d+\s+years?[^.\n;]*", qual_text, re.I)
-    if m:
-        return m.group(0).strip().rstrip(".")
-    m = re.search(r"\b\d+\s+years?[^.\n;]*experience", qual_text, re.I)
-    if m:
-        return m.group(0).strip().rstrip(".")
-    return ""
 
 def extract_salary(text: str) -> str:
     if not text:
         return ""
-    m = re.search(r"(?:ETB|Birr|birr)\s*([0-9]{1,3}(?:,\s?[0-9]{3})+(?:\.[0-9]+)?)", text)
+    # Ethiopian Birr (ETB / Br / ብር)
+    m = re.search(r"(?:ETB|Br\.?|birr)\s*([0-9]{1,3}(?:,\s?[0-9]{3})+(?:\.[0-9]+)?)", text, re.I)
     if m:
         amt = re.sub(r"\s+", "", m.group(1))
         return f"ETB {amt}"
-    m = re.search(r"\b(?:salary|remuneration)\b[^.\n]{0,80}", text, re.I)
+    m = re.search(r"(?:salary|remuneration|pay)[^.\n]{0,80}", text, re.I)
     if m and re.search(r"\d", m.group(0)):
         return m.group(0).strip().rstrip(".")
     return ""
 
 # =============================================================================
-#  CANONICAL NORMALISERS
+#  QUALIFICATION / EXPERIENCE / FIELD  (shared schema)
 # =============================================================================
 
 def _kw_hit(text_low: str, keywords) -> bool:
@@ -463,31 +449,30 @@ def _kw_hit(text_low: str, keywords) -> bool:
 QUALIFICATION_TIERS = [
     ("PhD / Doctorate",          ["phd", "ph.d", "doctorate", "doctoral", "doctor of philosophy"]),
     ("Master's Degree",          ["master", "msc", "m.sc", "ma ", "m.a ", "mba", "m.b.a", "meng",
-                                  "m.eng", "mphil", "postgraduate", "post-graduate", "post graduate"]),
+                                   "m.eng", "mphil", "postgraduate", "post-graduate", "post graduate"]),
     ("Bachelor's Degree",        ["bachelor", "bsc", "b.sc", "ba ", "b.a ", "beng", "b.eng", "bcom",
-                                  "b.com", "bba", "llb", "degree in", "undergraduate degree",
-                                  "honours degree", "hons"]),
+                                   "b.com", "bba", "llb", "degree in", "undergraduate degree",
+                                   "honours degree", "hons"]),
     ("Higher National Diploma",  ["hnd", "hnc", "higher national diploma", "higher national certificate",
-                                  "higher diploma", "advanced diploma"]),
-    ("Diploma",                  ["diploma", "dip ", "dip.", "associate degree", "foundation degree"]),
+                                   "higher diploma", "advanced diploma"]),
+    ("Diploma",                  ["diploma", "dip ", "dip.", "associate degree", "foundation degree",
+                                   "tvet", "level iii", "level iv", "level i", "level ii"]),
     ("Professional Certification", ["acca", "cpa", "cfa", "cima", "pmp", "prince2", "cissp",
-                                    "aws certified", "comptia", "cisco", "ccna", "ccnp", "shrm",
-                                    "cipd", "chartered", "certified public", "certified financial",
-                                    "certified project", "professional certification",
-                                    "professional certificate"]),
-    ("A-Levels / HSC",           ["a-level", "a level", "hsc", "higher school certificate", "ib diploma",
-                                  "international baccalaureate", "gce advanced"]),
+                                     "aws certified", "comptia", "cisco", "ccna", "ccnp", "shrm",
+                                     "cipd", "chartered", "certified public", "certified financial",
+                                     "certified project", "professional certification",
+                                     "professional certificate"]),
+    ("A-Levels / HSC",           ["a-level", "a level", "hsc", "higher school certificate",
+                                   "gce advanced", "preparatory"]),
     ("O-Levels / School Certificate", ["o-level", "o level", "igcse", "gcse", "school certificate",
-                                       "sc ", "cpe", "certificate of primary"]),
+                                        "grade 10", "grade 8", "8th grade complete", "grade 12"]),
     ("No Formal Qualification Required", ["no qualification", "no degree", "no formal", "school leaver",
-                                          "entry level", "no experience required", "training provided",
-                                          "will train"]),
+                                           "entry level", "no experience required", "training provided",
+                                           "will train"]),
 ]
 
 def extract_qualification(text: str) -> str:
     if not text:
-        return ""
-    if re.search(r"nursery|primary years|ib pyp|aged between|boys and girls", text, re.I):
         return ""
     lower = text.lower()
     for label, keywords in QUALIFICATION_TIERS:
@@ -496,10 +481,10 @@ def extract_qualification(text: str) -> str:
     return ""
 
 NO_EXP_KW = ["no experience", "no prior experience", "fresh graduate", "freshers",
-             "entry level", "entry-level", "0 years", "zero experience",
-             "training provided", "will train", "no experience required"]
+              "entry level", "entry-level", "0 years", "zero experience",
+              "training provided", "will train", "no experience required", "fresh"]
 LESS1_KW  = ["less than 1 year", "under 1 year", "6 months", "less than a year",
-             "some experience", "minimal experience"]
+              "some experience", "minimal experience"]
 
 def years_to_band(n: int) -> str:
     if n <= 0:  return "No Experience Required"
@@ -631,6 +616,11 @@ FIELD_KEYWORD_MAP = [
      ["security officer", "security guard", "security manager", "cctv", "loss prevention",
       "risk manager", "health and safety", "hse officer", "osh", "fire safety"],
      ["security", "safety", "risk", "surveillance", "patrol", "access control", "emergency"]),
+    ("Agriculture & Environment",
+     ["agronomist", "agricultural officer", "farm manager", "veterinarian", "livestock officer",
+      "crop specialist", "irrigation engineer", "environmental officer", "forestry officer",
+      "fisheries officer", "soil scientist", "extension worker"],
+     ["agriculture", "farming", "livestock", "crop", "irrigation", "environment", "forestry", "agro"]),
     ("Media & Journalism",
      ["journalist", "editor", "reporter", "broadcast", "news anchor", "content creator",
       "media manager", "radio", "television", "producer", "scriptwriter"],
@@ -1008,11 +998,8 @@ def make_job_id(job_url: str, title: str = "", company: str = "") -> str:
 def mark_scraped(job_id, job_url, title, company):
     log_.info(f"Tracker -> scraped: {job_id} | {title}")
     _upsert_row(job_id, {
-        "Job URL":      job_url,
-        "Job Title":    title,
-        "Company Name": company,
-        "Status":       "scraped",
-        "WP ID":        "",
+        "Job URL": job_url, "Job Title": title,
+        "Company Name": company, "Status": "scraped", "WP ID": "",
     })
 
 def mark_paraphrased(job_id):
@@ -1041,7 +1028,7 @@ def write_flagged(raw_job: dict, reason: str, apply_note: str):
     try:
         with open(FLAGGED_FILE, "a", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow([
-                "EthioJobs",
+                "JobWebEthiopia",
                 raw_job.get("title", ""),
                 raw_job.get("company_name", ""),
                 raw_job.get("location", ""),
@@ -1126,6 +1113,7 @@ def post_job_to_wordpress(job: dict) -> tuple:
     if not (is_email or is_url_v):
         application = ""
 
+    # Upload logo
     attachment_id = None
     if logo_url:
         try:
@@ -1190,570 +1178,365 @@ def post_job_to_wordpress(job: dict) -> tuple:
     return None, None
 
 # =============================================================================
-#  ETHIOJOBS JSON-API SCRAPE LAYER
+#  STEP 1 — COLLECT JOB DETAIL URLS
 # =============================================================================
 
-API_SESSION = requests.Session()
-API_SESSION.headers.update({
-    "User-Agent": HEADERS["User-Agent"],
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Origin": BASE_URL,
-    "Referer": BASE_URL + "/",
-})
-
-_CAREER_LEVEL_MAP = {
-    "junior level(1-3 years)":  "1 - 2 Years",
-    "junior level (1-3 years)": "1 - 2 Years",
-    "junior":                   "1 - 2 Years",
-    "entry level":              "1 - 2 Years",
-    "entry-level":              "1 - 2 Years",
-    "mid level(3-5 years)":     "3 - 5 Years",
-    "mid level (3-5 years)":    "3 - 5 Years",
-    "mid-level":                "3 - 5 Years",
-    "mid level":                "3 - 5 Years",
-    "senior(5-8 years)":        "6 - 10 Years",
-    "senior (5-8 years)":       "6 - 10 Years",
-    "senior level":             "6 - 10 Years",
-    "senior":                   "6 - 10 Years",
-    "managerial level":         "10+ Years",
-    "managerial":               "10+ Years",
-    "director":                 "10+ Years",
-    "executive":                "10+ Years",
-}
-
-def _career_level_to_band(raw: str) -> str:
-    if not raw:
-        return ""
-    key = raw.strip().lower()
-    if key in _CAREER_LEVEL_MAP:
-        return _CAREER_LEVEL_MAP[key]
-    for label, band in _CAREER_LEVEL_MAP.items():
-        if key.startswith(label):
-            return band
-    if "junior" in key or "entry" in key:                 return "1 - 2 Years"
-    if "mid" in key:                                      return "3 - 5 Years"
-    if "senior" in key:                                   return "6 - 10 Years"
-    if "managerial" in key or "director" in key or "executive" in key:
-        return "10+ Years"
-    return ""
-
-_JOB_KEY_CANDIDATES = {
-    "id":           ["id", "_id", "jobId", "job_id", "slug", "token", "uuid"],
-    "title":        ["title", "jobTitle", "job_title", "name", "position", "positionTitle"],
-    "company":      ["company", "companyName", "company_name", "employer", "organization",
-                     "organisation", "recruiter", "employerName"],
-    "company_url":  ["companyUrl", "company_url", "companyLink", "profileUrl", "company_profile"],
-    "company_logo": ["companyLogo", "company_logo", "logo", "logoUrl", "logo_url", "image", "companyImage"],
-    "company_website": ["companyWebsite", "company_website", "website", "websiteUrl"],
-    "company_address": ["companyAddress", "company_address", "address", "officeAddress"],
-    "company_about":   ["companyAbout", "company_about", "companyDescription",
-                        "company_description", "aboutCompany", "about"],
-    "location":     ["location", "jobLocation", "job_location", "region", "city",
-                     "workLocation", "work_location", "dutyStation", "duty_station"],
-    "job_type":     ["jobType", "job_type", "employmentType", "employment_type", "type",
-                     "contractType", "contract_type"],
-    "category":     ["category", "categories", "jobCategory", "job_category", "sector",
-                     "field", "department", "industry"],
-    "career_level": ["careerLevel", "career_level", "level", "experienceLevel",
-                     "experience_level", "seniority"],
-    "deadline":     ["deadline", "closingDate", "closing_date", "applicationDeadline",
-                     "application_deadline", "expiryDate", "expiry_date", "expiresAt",
-                     "expires_at", "dueDate", "due_date", "endDate"],
-    "date_posted":  ["createdAt", "created_at", "datePosted", "date_posted", "postedAt",
-                     "posted_at", "publishedAt", "published_at", "startDate"],
-    "description":  ["description", "jobDescription", "job_description", "details",
-                     "jobDetails", "job_details", "body", "content", "summary"],
-    "requirements": ["requirements", "jobRequirements", "job_requirements", "qualifications",
-                     "jobQualifications", "job_qualifications", "requirement"],
-    "how_to_apply": ["howToApply", "how_to_apply", "applicationInstructions",
-                     "application_instructions", "applyInstructions", "apply_instructions",
-                     "howToApplyText"],
-    "salary":       ["salary", "salaryRange", "salary_range", "compensation", "pay",
-                     "salaryInfo", "salary_info", "salaryScale"],
-    "apply_email":  ["applicationEmail", "application_email", "applyEmail", "apply_email",
-                     "contactEmail", "contact_email", "email"],
-    "apply_url":    ["applicationUrl", "application_url", "applyUrl", "apply_url",
-                     "applicationLink", "application_link", "applyLink", "apply_link",
-                     "externalUrl", "external_url"],
-    "num_vacancies":["numberOfVacancies", "number_of_vacancies", "vacancies",
-                     "numberOfPositions", "positions", "noOfPositions"],
-    "slug":         ["slug", "seoUrl", "url", "link", "jobUrl", "job_url"],
-}
-
-def _pick(data: dict, field: str, default=""):
-    for k in _JOB_KEY_CANDIDATES.get(field, []):
-        if k in data:
-            v = data.get(k)
-            if isinstance(v, dict):
-                v = v.get("name") or v.get("title") or v.get("value") or ""
-            if isinstance(v, list):
-                v = ", ".join(str(x.get("name", x) if isinstance(x, dict) else x) for x in v)
-            if v is not None and str(v).strip():
-                return str(v).strip()
-    return default
-
-_JOB_LIKE_KEYS = ("jobtitle", "job_title", "title", "position", "positiontitle")
-
-def _is_job_api_response(data) -> bool:
-    if isinstance(data, dict):
-        keys_low = {k.lower() for k in data}
-        if any(k in keys_low for k in _JOB_LIKE_KEYS):
-            return True
-        for v in data.values():
-            if isinstance(v, list) and v and isinstance(v[0], dict):
-                sub = {kk.lower() for kk in v[0]}
-                if any(k in sub for k in _JOB_LIKE_KEYS):
-                    return True
-            if isinstance(v, dict):
-                for vv in v.values():
-                    if isinstance(vv, list) and vv and isinstance(vv[0], dict):
-                        sub = {kk.lower() for kk in vv[0]}
-                        if any(k in sub for k in _JOB_LIKE_KEYS):
-                            return True
-    if isinstance(data, list) and data and isinstance(data[0], dict):
-        sub = {k.lower() for k in data[0]}
-        if any(k in sub for k in _JOB_LIKE_KEYS):
-            return True
-    return False
-
-def _extract_job_list_from_api(data) -> list:
-    if isinstance(data, list):
-        return [d for d in data if isinstance(d, dict)]
-    if isinstance(data, dict):
-        for wrap in ("data", "jobs", "results", "items", "listings", "vacancies",
-                     "posts", "content", "docs", "rows", "records", "hits"):
-            v = data.get(wrap)
-            if isinstance(v, list) and v and isinstance(v[0], dict):
-                return v
-            if isinstance(v, dict):
-                for wrap2 in ("jobs", "results", "items", "content", "docs", "data"):
-                    vv = v.get(wrap2)
-                    if isinstance(vv, list) and vv and isinstance(vv[0], dict):
-                        return vv
-        if _is_job_api_response(data) and any(
-                k.lower() in _JOB_LIKE_KEYS for k in data):
-            return [data]
-    return []
-
-def _norm_ethiojobs_url(href: str) -> str:
+def _norm_job_url(href: str) -> str:
+    """Canonicalise a /jobs/<slug>/ URL: https host, no query/fragment, trailing /."""
     if not href:
         return ""
-    if href.startswith("http"):
-        p = urlsplit(href)
-        return urlunsplit(("https", "ethiojobs.net", p.path.rstrip("/"), "", ""))
-    return urlunsplit(("https", "ethiojobs.net", "/" + href.lstrip("/").rstrip("/"), "", ""))
+    absu = urljoin(BASE_URL + "/", href)
+    p = urlsplit(absu)
+    path = p.path
+    if not path.endswith("/"):
+        path += "/"
+    return urlunsplit(("https", p.netloc.lower(), path, "", ""))
 
-def _job_url_from_record(rec: dict) -> str:
-    slug = _pick(rec, "slug")
-    if slug:
-        if slug.startswith("http") or slug.startswith("/job"):
-            return _norm_ethiojobs_url(slug)
-        if "/" not in slug:
-            return _norm_ethiojobs_url("/job/" + slug)
-        return _norm_ethiojobs_url(slug)
-    jid = _pick(rec, "id")
-    if jid:
-        return _norm_ethiojobs_url("/job/" + jid)
-    return ""
+def _is_job_detail_path(path: str) -> bool:
+    """True for /jobs/<slug>/ — one segment after 'jobs', not 'page'."""
+    parts = [s for s in path.split("/") if s]
+    return (len(parts) == 2 and parts[0] == "jobs"
+            and parts[1].lower() not in ("page",))
 
-# ---------------------------------------------------------------------------
-# API DISCOVERY
-# ---------------------------------------------------------------------------
+def _page_url(jobs_url: str, page: int) -> str:
+    if page <= 1:
+        return jobs_url
+    base = jobs_url if jobs_url.endswith("/") else jobs_url + "/"
+    return f"{base}page/{page}/"
 
-_JS_SRC_RE   = re.compile(r'(?:src|href)="(/_next/[^"]+\.js)"', re.I)
-_API_BASE_RE = re.compile(r'https://[a-z0-9.-]*api[a-z0-9.-]*\.ethiojobs\.net', re.I)
-_API_PATH_RE = re.compile(r'["\'`](/(?:api/)?(?:job|jobs|vacancy|vacancies)[a-z0-9/_\-{}.]*)["\'`]', re.I)
-
-def _load_api_cache() -> dict:
-    try:
-        with open(API_CACHE_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-def _save_api_cache(d: dict):
-    try:
-        with open(API_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(d, f, indent=2)
-    except Exception as e:
-        log_.warning(f"Could not write API cache: {e}")
-
-def _clear_api_cache():
-    try:
-        if os.path.exists(API_CACHE_FILE):
-            os.remove(API_CACHE_FILE)
-            log_.info(f"Cleared stale API cache: {API_CACHE_FILE}")
-    except Exception as e:
-        log_.warning(f"Could not clear API cache: {e}")
-
-def _scan_js_for_api(seed_url: str):
-    bases, paths = set(), set()
-    try:
-        r = SESSION.get(seed_url, timeout=REQUEST_TIMEOUT)
-        html = r.text
-    except Exception as e:
-        log(C_DIM(f"  Could not load {seed_url} for discovery: {e}"))
-        return bases, paths
-
-    for m in _API_BASE_RE.findall(html):
-        bases.add(m.rstrip("/"))
-
-    js_urls = []
-    for src in _JS_SRC_RE.findall(html):
-        js_urls.append(urljoin(BASE_URL + "/", src))
-
-    seen = set()
-    for ju in js_urls:
-        if ju in seen:
-            continue
-        seen.add(ju)
-        if len(seen) > 25:
-            break
-        try:
-            jr = SESSION.get(ju, timeout=REQUEST_TIMEOUT)
-            js = jr.text
-        except Exception:
-            continue
-        for m in _API_BASE_RE.findall(js):
-            bases.add(m.rstrip("/"))
-        for m in _API_PATH_RE.findall(js):
-            paths.add(m)
-    return bases, paths
-
-def _probe_list_endpoint(base: str, path: str) -> bool:
-    """True if GET base+path returns job JSON. Tries several paging param styles."""
-    # Normalise: one slash between base and path
-    url = base.rstrip("/") + "/" + path.lstrip("/")
-    param_sets = [
-        {"page": 1, "limit": PAGE_SIZE},
-        {"page": 1, "pageSize": PAGE_SIZE},
-        {"page": 1, "perPage": PAGE_SIZE},
-        {"page": 0, "limit": PAGE_SIZE},
-        {"offset": 0, "limit": PAGE_SIZE},
-        {"p": 1, "size": PAGE_SIZE},
-        {},
-    ]
-    for params in param_sets:
-        try:
-            r = API_SESSION.get(url, params=params, timeout=REQUEST_TIMEOUT)
-            ct = r.headers.get("content-type", "")
-            if r.status_code != 200 or "json" not in ct:
-                continue
-            data = r.json()
-        except Exception:
-            continue
-        if _extract_job_list_from_api(data):
-            log_.debug(f"  probe OK: {url} params={params}")
-            return True
-    return False
-
-def _probe_and_log(base: str, path: str) -> bool:
-    """Wrapper that logs each probe attempt at DEBUG level."""
-    url = base.rstrip("/") + "/" + path.lstrip("/")
-    log_.debug(f"  probing: {url}")
-    result = _probe_list_endpoint(base, path)
-    if result:
-        log(C_GREEN(f"  ✓ working endpoint: {url}"))
-    return result
-
-def discover_api(force: bool = False) -> dict:
-    """
-    Resolve {base, list, detail} for the EthioJobs JSON API.
-
-    Priority order:
-      1) Cached result — but only if the cached endpoint still responds
-         (stale cache from a failed previous run is cleared automatically)
-      2) JS-bundle scan: bases/paths extracted from the live site JS
-      3) Configured candidate lists (API_LIST_PATHS env var / defaults)
-
-    The working result is written to API_CACHE_FILE for the next run.
-    """
-    if not force:
-        cached = _load_api_cache()
-        if cached.get("base") and cached.get("list"):
-            if _probe_list_endpoint(cached["base"], cached["list"]):
-                log_.info(f"Using cached API: {cached['base']}{cached['list']}")
-                return cached
-            else:
-                log(C_DIM("  Cached API endpoint no longer responds — re-discovering"))
-                _clear_api_cache()
-
-    log(C_BLUE("\n  Discovering EthioJobs API endpoints …"))
-
-    # ── Step 1: gather candidate bases ──────────────────────────────────────
-    bases = []
-    if API_BASE:
-        bases.append(API_BASE.rstrip("/"))
-
-    scanned_bases, scanned_paths = _scan_js_for_api(JOBS_URL)
-
-    for b in scanned_bases:
-        if b not in bases:
-            bases.append(b)
-
-    # Hard-coded fallbacks
-    for b in ("https://api.ethiojobs.net", "https://ethiojobs.net/api",
-              "https://backend.ethiojobs.net", "https://jobs.ethiojobs.net"):
-        if b not in bases:
-            bases.append(b)
-
-    # ── Step 2: build ordered candidate path list ────────────────────────────
-    # Scanned paths come first; configured paths fill in the rest.
-    # Filter out paths that clearly aren't listing endpoints (auth, counts, etc.)
-    _SKIP_PATH_FRAGMENTS = ("count", "application", "login", "register",
-                             "profile", "user", "auth", "token", "search/suggest")
-
-    list_candidates = []
-
-    for p in scanned_paths:
-        if "{" in p:
-            continue
-        if any(frag in p.lower() for frag in _SKIP_PATH_FRAGMENTS):
-            continue
-        if p not in list_candidates:
-            list_candidates.append(p)
-
-    for p in API_LIST_PATHS:
-        if p not in list_candidates:
-            list_candidates.append(p)
-
-    log(C_DIM(f"  Bases to probe  : {bases}"))
-    log(C_DIM(f"  Paths to probe  : {list_candidates}"))
-
-    # ── Step 3: probe ────────────────────────────────────────────────────────
-    found = {}
-    for base in bases:
-        for path in list_candidates:
-            if _probe_and_log(base, path):
-                found["base"] = base
-                found["list"] = path
-                break
-        if found:
-            break
-
-    if not found:
-        log(C_RED("  Could not auto-discover a working list endpoint."))
-        log(C_DIM("  Hint: set ETHIOJOBS_API_LIST_PATHS to override, or run --discover"))
-        log(C_DIM(f"  JS-scanned bases : {sorted(scanned_bases) or '—'}"))
-        log(C_DIM(f"  JS-scanned paths : {sorted(scanned_paths) or '—'}"))
-        return {}
-
-    found["detail"] = API_DETAIL_PATHS
-    _save_api_cache(found)
-    return found
-
-# ---------------------------------------------------------------------------
-# STEP 1 — collect job records from the listing API (paged)
-# ---------------------------------------------------------------------------
-
-def _fetch_list_page(base: str, path: str, page: int) -> list:
-    url = base.rstrip("/") + "/" + path.lstrip("/")
-    param_sets = [
-        {"page": page, "limit": PAGE_SIZE},
-        {"page": page, "pageSize": PAGE_SIZE},
-        {"page": page, "perPage": PAGE_SIZE},
-        {"page": page - 1, "limit": PAGE_SIZE},   # some APIs are 0-indexed
-        {"offset": (page - 1) * PAGE_SIZE, "limit": PAGE_SIZE},
-        {"p": page, "size": PAGE_SIZE},
-    ]
-    for params in param_sets:
-        try:
-            r = API_SESSION.get(url, params=params, timeout=REQUEST_TIMEOUT)
-            ct = r.headers.get("content-type", "")
-            if r.status_code != 200 or "json" not in ct:
-                continue
-            recs = _extract_job_list_from_api(r.json())
-            if recs:
-                return recs
-        except Exception:
-            continue
-    return []
-
-def collect_job_records(api: dict, listing_label: str = "") -> list:
-    base, path = api["base"], api["list"]
-    print(C_BLUE(f"\n  Collecting jobs from API: {base}{path}"))
+def collect_job_links(jobs_url: str, max_pages: int = MAX_PAGES) -> list:
+    print(C_BLUE(f"\n  Collecting job links from: {jobs_url}"))
     seen, ordered = set(), []
+    empty_streak = 0
 
-    for page in range(1, MAX_PAGES + 1):
-        recs = _fetch_list_page(base, path, page)
-        if not recs:
+    for page in range(1, max_pages + 1):
+        url = _page_url(jobs_url, page)
+        try:
+            soup = get_soup(url)
+        except requests.HTTPError as e:
+            log(C_DIM(f"  Page {page}: HTTP {getattr(e.response,'status_code','?')} — stopping."))
             break
-        new = 0
-        for rec in recs:
-            url = _job_url_from_record(rec) or _pick(rec, "id")
-            key = url or json.dumps(rec, sort_keys=True)[:200]
-            if key in seen:
+        except Exception as e:
+            log(C_DIM(f"  Page {page}: fetch error ({e}) — stopping."))
+            break
+
+        page_new = 0
+        for a in soup.find_all("a", href=True):
+            p = urlparse(a["href"])
+            path = p.path or urlparse(urljoin(BASE_URL + "/", a["href"])).path
+            if not _is_job_detail_path(path):
                 continue
-            seen.add(key)
-            ordered.append(rec)
-            new += 1
-        log(f"    page {page}: {new} new (total {len(ordered)})")
-        if new == 0:
-            break
+            norm = _norm_job_url(a["href"])
+            if norm and norm not in seen:
+                seen.add(norm)
+                ordered.append(norm)
+                page_new += 1
+
+        log(f"    Page {page}: {page_new} new job link(s) (total {len(ordered)})")
+
+        if page_new == 0:
+            empty_streak += 1
+            if empty_streak >= 2:
+                break
+        else:
+            empty_streak = 0
+
         time.sleep(REQUEST_DELAY)
 
     return ordered
 
-# ---------------------------------------------------------------------------
-# STEP 2 — turn one API job record into a normalised raw_job dict
-# ---------------------------------------------------------------------------
+# =============================================================================
+#  STEP 2 — PARSE ONE JOBWEBETHIOPIA DETAIL PAGE
+# =============================================================================
+#
+#  JobRoller theme structure:
+#    • H1 heading: "Job Title at Company Name"
+#    • Meta list: Company, Location (link /job-location/<slug>/), State,
+#                 Job type (link /job-type/<slug>/), Job category (/job-category/)
+#    • Horizontal rule separators
+#    • "# Job Description" heading followed by the full body
+#    • "# Method of Application" heading near the bottom (contains apply email)
+#    • An upload form (Name/Email/Message) — NOT a real apply destination
+# =============================================================================
 
-def _fetch_detail_record(api: dict, rec: dict) -> dict:
-    has_body = bool(_pick(rec, "description")) and len(_pick(rec, "description")) > 120
-    jid = _pick(rec, "id")
-    if has_body or not jid:
-        return rec
+_CONTENT_SELECTORS = [
+    "div.job-description",
+    "div.single-job-content",
+    "div#job-detail",
+    "div.noo-job-content",
+    "div.entry-content",
+    "article .entry-content",
+    "main .entry-content",
+    "div.page-content",
+]
 
-    base = api["base"]
-    for tmpl in api.get("detail", API_DETAIL_PATHS):
-        path = tmpl.replace("{id}", jid)
-        url  = base.rstrip("/") + "/" + path.lstrip("/")
-        try:
-            r = API_SESSION.get(url, timeout=REQUEST_TIMEOUT)
-            ct = r.headers.get("content-type", "")
-            if r.status_code != 200 or "json" not in ct:
-                continue
-            data = r.json()
-        except Exception:
+def _find_content(soup):
+    best, best_len = None, 0
+    for sel in _CONTENT_SELECTORS:
+        el = soup.select_one(sel)
+        if el:
+            txt = el.get_text(" ", strip=True)
+            if len(txt) > best_len:
+                best, best_len = el, len(txt)
+        if best and best_len > 300:
+            return best
+    if best:
+        return best
+    main = soup.find("main") or soup.select_one("div.noo-main")
+    if main:
+        return main
+    return soup.find("article") or soup.body or soup
+
+def _is_real_apply_url(href: str) -> bool:
+    if not href:
+        return False
+    low = href.lower()
+    if low.startswith("mailto:") or low.startswith("#") or low.startswith("javascript:"):
+        return False
+    if not low.startswith("http"):
+        return False
+    if any(s in low for s in _NON_APPLY_HOST_SUBSTR):
+        return False
+    if any(s in low for s in _NON_APPLY_PATH_SUBSTR):
+        return False
+    return True
+
+def _is_apply_heading_line(line: str) -> bool:
+    s = line.strip().lstrip("•*-–—#:. ").strip()
+    if not s or len(s.split()) > 9:
+        return False
+    return bool(_APPLY_HEAD_PHRASES.match(s))
+
+def _split_description_and_apply(content_text: str):
+    if not content_text:
+        return "", ""
+
+    lines = content_text.split("\n")
+    kept = []
+    for ln in lines:
+        low = ln.strip().lower()
+        if low in _BODY_DROP_LINES:
             continue
-        recs = _extract_job_list_from_api(data)
-        if recs:
-            merged = dict(rec)
-            merged.update(recs[0])
-            return merged
-        if isinstance(data, dict) and _is_job_api_response(data):
-            merged = dict(rec)
-            merged.update(data)
-            return merged
-    return rec
+        if any(low.startswith(m) for m in _BODY_CUT_MARKERS):
+            break
+        kept.append(ln)
 
-def _map_job_record(data: dict, job_url: str) -> dict:
-    title        = clean_title(_pick(data, "title"))
-    company      = sanitize_text(_pick(data, "company")) or "EthioJobs Employer"
-    company_url  = sanitize_text(_pick(data, "company_url"),     is_url=True)
-    company_logo = sanitize_text(_pick(data, "company_logo"),    is_url=True)
-    company_website = sanitize_text(_pick(data, "company_website"), is_url=True)
-    company_address = sanitize_text(_pick(data, "company_address"))
-    company_about   = sanitize_text(_pick(data, "company_about"))
-    salary          = sanitize_text(_pick(data, "salary"))
+    apply_idx = None
+    for i, ln in enumerate(kept):
+        if _is_apply_heading_line(ln):
+            apply_idx = i
+            break
 
-    location_raw = _pick(data, "location")
-    location     = sanitize_text(location_raw) or DEFAULT_LOCATION
+    if apply_idx is None:
+        return "\n".join(kept).strip(), ""
 
-    job_type_raw = _pick(data, "job_type") or "Full-time"
-    job_type     = JOB_TYPE_MAPPING.get(job_type_raw.lower().strip(), "full-time")
+    description = "\n".join(kept[:apply_idx]).strip()
+    apply_text  = "\n".join(kept[apply_idx:]).strip()
+    if not description:
+        return "\n".join(kept).strip(), ""
+    return description, apply_text
 
-    deadline_raw    = _pick(data, "deadline")
-    date_posted_raw = _pick(data, "date_posted")
-    deadline    = parse_any_date(deadline_raw) if deadline_raw else ""
-    date_posted = parse_any_date(date_posted_raw) if date_posted_raw else ""
+def _anchors_in(scope, needle: str):
+    out = []
+    for a in scope.find_all("a", href=True):
+        if needle in (urlparse(a["href"]).path or a["href"]):
+            t = a.get_text(" ", strip=True)
+            if t:
+                out.append(t)
+    return out
+
+def scrape_job_detail(url: str) -> dict:
+    """Parse a single JobWebEthiopia /jobs/<slug>/ page into a raw_job dict."""
+    soup = get_soup(url)
+
+    # ── Title ──────────────────────────────────────────────────────────────
+    # H1 on JobRoller is "Job Title at Company Name" — strip the company part.
+    h1 = (soup.select_one("h1.job-title") or soup.select_one("h1.entry-title")
+          or soup.find("h1"))
+    raw_title = h1.get_text(" ", strip=True) if h1 else ""
+    # Try to split off " at COMPANY" so jobTitle is clean.
+    title = sanitize_text(raw_title)
+    company_from_h1 = ""
+    if " at " in title:
+        parts = title.rsplit(" at ", 1)
+        title           = parts[0].strip()
+        company_from_h1 = parts[1].strip()
+
+    # ── Company name ───────────────────────────────────────────────────────
+    company_name = ""
+    company_url_val = ""
+    # JobRoller meta: "Company: XXXXX" text node or a link.
+    meta_list = soup.select_one("ul.job-info") or soup.select_one("ul.listing-info")
+    if meta_list:
+        for li in meta_list.find_all("li"):
+            li_text = li.get_text(" ", strip=True)
+            if li_text.lower().startswith("company"):
+                a_tag = li.find("a")
+                if a_tag:
+                    company_name    = a_tag.get_text(" ", strip=True)
+                    company_url_val = urljoin(BASE_URL, a_tag.get("href", ""))
+                else:
+                    company_name = re.sub(r"^company\s*:?\s*", "", li_text, flags=re.I).strip()
+    if not company_name:
+        company_name = company_from_h1 or "JobWebEthiopia Employer"
+
+    # ── Location ───────────────────────────────────────────────────────────
+    location_opts = _anchors_in(soup, "/job-location/")
+    location = pick_location(location_opts)
+
+    # Also check "State:" in the meta list for a more specific city.
+    state_val = ""
+    if meta_list:
+        for li in meta_list.find_all("li"):
+            if li.get_text(" ", strip=True).lower().startswith("state"):
+                a_tag = li.find("a")
+                if a_tag:
+                    sv = a_tag.get_text(" ", strip=True)
+                    # Strip trailing "Jobs" suffix (e.g. "Addis Ababa Jobs")
+                    sv = re.sub(r"\s+jobs?\s*$", "", sv, flags=re.I).strip()
+                    state_val = sv
+    if state_val:
+        location = state_val
+
+    # ── Job type ───────────────────────────────────────────────────────────
+    job_type_opts = _anchors_in(soup, "/job-type/")
+    job_type = map_job_type(job_type_opts[0]) if job_type_opts else "full-time"
+
+    # ── Categories ─────────────────────────────────────────────────────────
+    category_opts = _anchors_in(soup, "/job-category/")
+    job_field_raw = ", ".join(dict.fromkeys(category_opts)) if category_opts else ""
+
+    # ── Logo ───────────────────────────────────────────────────────────────
+    logo = ""
+    og = soup.find("meta", attrs={"property": "og:image"})
+    if og and og.get("content"):
+        candidate = og["content"].strip()
+        # Reject the site's own generic logo
+        if "jobwebethio" not in candidate.lower():
+            logo = candidate
+    if not logo:
+        # Employer logo sometimes in sidebar
+        emp_img = soup.select_one("div.company-logo img") or soup.select_one("img.company-logo")
+        if emp_img and emp_img.get("src"):
+            logo = emp_img["src"].strip()
+
+    # ── Dates ──────────────────────────────────────────────────────────────
+    date_posted = ""
+    deadline    = ""
+
+    # Date in the card header: "23 Jun 2026" or "23/Jun/2026"
+    date_el = soup.select_one("span.date") or soup.select_one("time")
+    if date_el:
+        raw_date = date_el.get_text(" ", strip=True)
+        ds = text_dates(raw_date) or dmy_dates(raw_date)
+        if ds:
+            date_posted = ds[0]
+
+    page_text_full = soup.get_text("\n")
+    for lab in DEADLINE_LABELS:
+        m = re.search(rf"{lab}\s*[:\-]?\s*([^\n<]+)", page_text_full, re.I)
+        if m:
+            d = parse_any_date(m.group(1))
+            if d:
+                deadline = d
+                break
+
     if not date_posted:
         date_posted = datetime.now().strftime("%Y-%m-%d")
     if not deadline:
         deadline = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
 
-    desc_raw  = _pick(data, "description")
-    req_raw   = _pick(data, "requirements")
-    apply_raw = _pick(data, "how_to_apply")
+    # ── Body: description + apply section ──────────────────────────────────
+    content_el = _find_content(soup)
+    content_copy = BeautifulSoup(str(content_el), "lxml")
+    content_text = html_block_to_text(content_copy)
+    description, apply_text = _split_description_and_apply(content_text)
+    if not description:
+        description = content_text
 
-    def _maybe_html(s):
-        if s and ("<" in s and ">" in s):
-            return html_block_to_text(BeautifulSoup(s, "lxml"))
-        return s
+    # ── Qualification + experience ─────────────────────────────────────────
+    qual_block = ""
+    qm = re.search(
+        r"(?:^|\n)[ \t]*(?:educational\s+(?:background|requirement|qualification)|"
+        r"qualifications?(?:\s*(?:&|and)\s*experience)?|about\s+you)"
+        r"(?:\s+\w+){0,3}\s*:?[ \t]*\n"
+        r"(.*?)"
+        r"(?:\n[ \t]*(?:how\s*(?:and|&)?\s*(?:deadline\s*)?to\s*apply|method\s+of\s+application|"
+        r"mode\s+of\s+application|what\s+we\s+offer|key\s+competenc)\b"
+        r"|\n[ \t]*[A-Z][^\n]{0,60}:[ \t]*\n|\Z)",
+        description, re.I | re.S)
+    if qm:
+        qual_block = qm.group(1).strip()[:1500]
 
-    parts = []
-    if desc_raw:
-        parts.append(_maybe_html(desc_raw))
-    if req_raw:
-        parts.append("Requirements:\n" + _maybe_html(req_raw))
-    if apply_raw:
-        parts.append("How to Apply:\n" + _maybe_html(apply_raw))
-    description = sanitize_text("\n\n".join(p for p in parts if p))
+    qualification = extract_qualification(qual_block or description)
+    experience    = extract_experience_band(qual_block or description)
 
-    cat_raw   = _pick(data, "category")
-    job_field = infer_field(title, description, cat_raw)
+    # ── Job field ──────────────────────────────────────────────────────────
+    job_field = infer_field(title, description, job_field_raw)
 
-    career_level_raw = _pick(data, "career_level")
-    experience_band  = _career_level_to_band(career_level_raw)
-    if not experience_band:
-        experience_band = extract_experience_band(_maybe_html(req_raw) or description)
+    # ── Apply target ───────────────────────────────────────────────────────
+    apply_email = ""
+    apply_url   = ""
 
-    qualification = extract_qualification(_maybe_html(req_raw) or description)
-
-    apply_email, apply_url = "", ""
-    api_email = _pick(data, "apply_email")
-    api_url   = _pick(data, "apply_url")
-    if api_email and _is_real_apply_email(api_email):
-        apply_email = api_email
-    if api_url and _is_real_apply_url(api_url):
-        apply_url = strip_tracking_params(api_url)
-
-    scan = "\n".join([_maybe_html(apply_raw) or "", _maybe_html(req_raw) or "",
-                      _maybe_html(desc_raw) or ""])
-    if not apply_email:
-        cand = extract_email(scan)
-        if cand and _is_real_apply_email(cand):
+    # 1) Cloudflare-decoded emails in content (already decoded by get_soup)
+    scan_text = apply_text or description
+    m_email = EMAIL_PATTERN.search(scan_text)
+    if m_email:
+        cand = m_email.group(0)
+        if _is_real_apply_email(cand):
             apply_email = cand
+
+    # 2) Explicit mailto: anchors in content_el
+    for a in content_el.find_all("a", href=True):
+        href = a["href"].strip()
+        if href.lower().startswith("mailto:"):
+            cand = href[7:].split("?")[0].strip()
+            if _is_real_apply_email(cand):
+                apply_email = apply_email or cand
+        elif _is_real_apply_url(href):
+            apply_url = apply_url or strip_tracking_params(href)
+
+    # 3) Plain URL fallback in apply text
     if not apply_url:
-        for u in URL_PATTERN.findall(scan):
+        for u in URL_PATTERN.findall(scan_text):
             if _is_real_apply_url(u):
                 apply_url = strip_tracking_params(u.rstrip(".,);"))
                 break
 
-    if APPLY_VIA_SOURCE_URL and not apply_email and not apply_url:
-        apply_url = job_url
+    salary = extract_salary(description)
 
-    if not salary:
-        salary = extract_salary(scan)
+    # ── Company website (from "Website" sidebar link) ─────────────────────
+    company_website = ""
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        label = a.get_text(" ", strip=True).lower()
+        if label in ("website", "company website") and href.startswith("http"):
+            if "jobwebethiopia.com" not in href.lower():
+                company_website = href.strip()
+                break
 
     return {
         "title":           title,
-        "company_name":    company,
-        "company_url":     company_url,
+        "company_name":    company_name,
+        "company_url":     company_url_val,
         "company_website": company_website,
-        "company_address": company_address,
-        "company_logo":    company_logo,
-        "company_about":   company_about,
+        "company_address": location,
+        "company_logo":    logo,
         "job_type":        job_type,
         "location":        location,
         "job_field":       job_field,
-        "job_categories":  cat_raw,
+        "job_categories":  job_field_raw,
         "date_posted":     date_posted,
         "deadline":        deadline,
         "description":     description,
         "qualification":   qualification,
-        "experience":      experience_band,
+        "experience":      experience,
         "salary":          salary,
         "apply_email":     apply_email,
         "apply_url":       apply_url,
-        "apply_text":      _maybe_html(apply_raw),
-        "job_url":         job_url,
+        "apply_text":      apply_text,
+        "job_url":         _norm_job_url(url),
     }
-
-def scrape_job_detail(rec, api: dict = None) -> dict:
-    if not isinstance(rec, dict):
-        raise ValueError("scrape_job_detail expects an API job record dict")
-    job_url = _job_url_from_record(rec)
-    full    = _fetch_detail_record(api, rec) if api else rec
-    return _map_job_record(full, job_url)
-
-def inspect_first_job(api: dict):
-    recs = _fetch_list_page(api["base"], api["list"], 1)
-    if not recs:
-        print(C_RED("  No records returned by the list endpoint."))
-        return
-    rec = recs[0]
-    print(C_GREEN(f"\n  Listing record keys: {list(rec.keys())}"))
-    for k, v in list(rec.items())[:25]:
-        print(f"    {k!r:28s} -> {str(v)[:90]!r}")
-    full = _fetch_detail_record(api, rec)
-    if full is not rec:
-        print(C_GREEN(f"\n  Detail record keys: {list(full.keys())}"))
-    print(C_BLUE("\n  Mapped raw_job:"))
-    mapped = _map_job_record(full, _job_url_from_record(rec))
-    for k, v in mapped.items():
-        print(f"    {k!r:18s} -> {str(v)[:90]!r}")
 
 # =============================================================================
 #  STEP 3 — DEDUPLICATE + PARAPHRASE + APPLY-RULE GATING
@@ -1786,8 +1569,7 @@ def process_job(raw_job: dict, processed_ids: set, processed_urls: set, seen_con
 
     if REQUIRE_PUBLIC_APPLY and not qualifies:
         write_flagged(raw_job,
-                      "no public apply email or external URL (on-platform apply on "
-                      "EthioJobs; set APPLY_VIA_SOURCE_URL=1 to post anyway)",
+                      "no public apply email or external URL found",
                       raw_job.get("apply_text", "")[:300])
         log(C_RED(f"  FLAGGED (no public apply) — {title}"))
         return "flagged", None
@@ -1808,7 +1590,7 @@ def process_job(raw_job: dict, processed_ids: set, processed_urls: set, seen_con
     else:
         print(C_DIM("  Paraphrasing skipped (ENABLE_PARAPHRASE=False or MISTRAL_API_KEY not set)"))
 
-    application = apply_email or apply_url
+    application  = apply_email or apply_url
     apply_method = ("description_email" if apply_email
                     else "external_url" if apply_url else "not_found")
 
@@ -1918,31 +1700,16 @@ def _save_excel(jobs: list):
 # =============================================================================
 
 def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="EthioJobs Ethiopia scraper (JSON API)")
-    parser.add_argument("--discover", action="store_true",
-                        help="Discover + print the API endpoints, then exit.")
-    parser.add_argument("--inspect", action="store_true",
-                        help="Print the raw + mapped record for the first job, then exit.")
-    parser.add_argument("--force-discover", action="store_true",
-                        help="Delete cached API endpoints and re-discover from scratch.")
-    args = parser.parse_args()
-
-    if args.force_discover:
-        _clear_api_cache()
-
     start_time = datetime.now()
 
     print()
     print(C_HEADER("=" * 80))
-    print(C_HEADER("  ETHIOJOBS (ETHIOPIA) SCRAPER + MISTRAL PARAPHRASE + WORDPRESS POSTING"))
+    print(C_HEADER("  JOBWEBETHIOPIA SCRAPER + MISTRAL PARAPHRASE + WORDPRESS POSTING"))
     print(C_HEADER("=" * 80))
-    print(f"  Listing seed    : {JOBS_URL}")
-    print(f"  API base (cfg)  : {API_BASE}")
+    print(f"  Source          : {JOBS_URL}")
     print(f"  Public-apply    : {'✅ enforced (flag others)' if REQUIRE_PUBLIC_APPLY else '❌ off (post all)'}")
-    print(f"  Apply-via-URL   : {'✅ EthioJobs page = apply target' if APPLY_VIA_SOURCE_URL else '❌ off (strict)'}")
     print(f"  Max new jobs    : {'unlimited' if not MAX_JOBS else MAX_JOBS}")
-    print(f"  Max pages       : {MAX_PAGES}  (page size {PAGE_SIZE})")
+    print(f"  Max pages       : {MAX_PAGES}")
     print(f"  Paraphrase      : {'✅ enabled' if (ENABLE_PARAPHRASE and MISTRAL_API_KEY) else '❌ disabled'}")
     print(f"  WordPress post  : {'✅ enabled' if (WP_USER and WP_PASSWORD) else '❌ disabled'}")
     print(f"  Excel export    : {'✅ enabled' if _XLSX_AVAILABLE else '❌ disabled (pip install pandas openpyxl)'}")
@@ -1950,46 +1717,21 @@ def main():
     print(f"  Started         : {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(C_HEADER("=" * 80))
 
-    api = discover_api(force=args.discover or args.force_discover)
-    if not api:
-        log(C_RED("  Could not resolve the EthioJobs API — aborting."))
-        log(C_DIM("  Try: python et.py --force-discover"))
-        log(C_DIM("  Or set: ETHIOJOBS_API_LIST_PATHS env var with candidate paths"))
-        sys.exit(2)
-
-    if args.discover:
-        print(C_GREEN(f"\n  base   : {api['base']}"))
-        print(C_GREEN(f"  list   : {api['list']}"))
-        print(C_GREEN(f"  detail : {api.get('detail')}"))
-        print(C_DIM(f"  cached to {API_CACHE_FILE}"))
-        return
-
-    if args.inspect:
-        inspect_first_job(api)
-        return
-
     _init_tracker()
     _init_flagged()
     processed_ids, processed_urls = load_processed_ids()
     print(f"  Tracker loaded: {len(processed_ids)} previously processed job IDs")
 
     try:
-        records = []
-        seen_keys = set()
-        for listing in LISTING_URLS:
-            for rec in collect_job_records(api, listing):
-                key = _job_url_from_record(rec) or json.dumps(rec, sort_keys=True)[:200]
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    records.append(rec)
+        job_links = collect_job_links(JOBS_URL)
     except Exception as e:
-        log(C_RED(f"  FATAL: could not collect job records: {e}"))
+        log(C_RED(f"  FATAL: could not collect job links: {e}"))
         return
 
-    if not records:
-        log(C_RED("  No job records found — nothing to do."))
+    if not job_links:
+        log(C_RED("  No job links found — nothing to do."))
         return
-    print(C_GREEN(f"\n  Found {len(records)} job record(s) to process.\n"))
+    print(C_GREEN(f"\n  Found {len(job_links)} job detail page(s) to process.\n"))
 
     jobs_out = []
     seen_content = set()
@@ -1999,19 +1741,18 @@ def main():
     errors = 0
     scraped = 0
 
-    for rec in records:
-        link = _job_url_from_record(rec)
-        if link and link in processed_urls:
+    for link in job_links:
+        if link in processed_urls:
             dup_count += 1
             log(C_DIM(f"  Already processed (tracker) — skipped: {link}"))
             continue
 
         try:
-            raw_job = scrape_job_detail(rec, api)
+            raw_job = scrape_job_detail(link)
             scraped += 1
         except Exception as e:
             errors += 1
-            log(C_RED(f"  ERROR scraping {link or '<record>'} : {e}"))
+            log(C_RED(f"  ERROR scraping {link} : {e}"))
             time.sleep(REQUEST_DELAY)
             continue
 
@@ -2061,8 +1802,8 @@ def main():
     print(C_HEADER("=" * 80))
     print(C_HEADER("  SCRAPE COMPLETE"))
     print(C_HEADER("=" * 80))
-    print(f"  {C_LABEL('Job records found')}         : {len(records)}")
-    print(f"  {C_LABEL('Detail records scraped')}    : {scraped}")
+    print(f"  {C_LABEL('Job links found')}           : {len(job_links)}")
+    print(f"  {C_LABEL('Detail pages scraped')}      : {scraped}")
     print(f"  {C_LABEL('New jobs processed')}        : {C_GREEN(str(len(jobs_out)))}")
     print(f"  {C_LABEL('Posted to WordPress')}       : {C_GREEN(str(posted_count))}")
     print(f"  {C_LABEL('Flagged (no public apply)')} : {flagged_count}")
