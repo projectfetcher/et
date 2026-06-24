@@ -13,14 +13,12 @@ from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit, parse_qsl, url
 import requests
 from bs4 import BeautifulSoup
 
-# Optional: load secrets from a local .env file if python-dotenv is installed.
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
     pass
 
-# Optional heavy deps used for Excel export only.
 try:
     import pandas as pd
     import openpyxl
@@ -28,7 +26,6 @@ try:
 except ImportError:
     _XLSX_AVAILABLE = False
 
-# Optional heavy deps used for paraphrase quality gating.
 try:
     import language_tool_python
     from sentence_transformers import SentenceTransformer, util as st_util
@@ -39,24 +36,6 @@ except ImportError:
 # =============================================================================
 #  CONFIG
 # =============================================================================
-#
-#  SOURCE
-#  ------
-#  https://jobwebethiopia.com/
-#
-#  JobWebEthiopia is a JobRoller-based WordPress job board. The archive lives at
-#  /jobs/ and paginates as /jobs/page/N/. Each listing is a full detail page at
-#  /jobs/<slug>/. The site obfuscates email addresses via Cloudflare's
-#  email-protection CDN script — the scraper decodes these automatically.
-#
-#  APPLY RULE (hard, network-wide)
-#  --------------------------------
-#  A job only posts if it exposes a PUBLIC apply path: an email or an external
-#  apply URL found in the "Method of Application" section. The on-page upload
-#  form (Name / Email / Message / Upload resumé) is treated as a login-gated
-#  fallback and is NEVER the apply destination.
-#  REQUIRE_PUBLIC_APPLY (default "1") enforces this; set to "0" to post all.
-# =============================================================================
 
 BASE_URL = "https://jobwebethiopia.com"
 JOBS_URL = os.environ.get("JOBWEB_JOBS_URL", "https://jobwebethiopia.com/jobs/")
@@ -64,8 +43,8 @@ JOBS_URL = os.environ.get("JOBWEB_JOBS_URL", "https://jobwebethiopia.com/jobs/")
 REQUIRE_PUBLIC_APPLY = os.environ.get("REQUIRE_PUBLIC_APPLY", "1") != "0"
 
 REQUEST_DELAY   = float(os.environ.get("REQUEST_DELAY", "1.0"))
-MAX_JOBS        = int(os.environ.get("MAX_JOBS", "0"))    # 0 = unlimited
-MAX_PAGES       = int(os.environ.get("MAX_PAGES", "20"))  # archive pagination cap
+MAX_JOBS        = int(os.environ.get("MAX_JOBS", "0"))
+MAX_PAGES       = int(os.environ.get("MAX_PAGES", "20"))
 REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", "25"))
 
 OUTPUT_FILE        = "jobwebethiopia_jobs.xlsx"
@@ -77,7 +56,6 @@ _TRACKER_FIELDS = ["Job ID", "Job URL", "Job Title", "Company Name",
 _FLAGGED_FIELDS = ["Source", "Title", "Company", "Location", "Salary",
                    "Deadline", "Reason", "Apply Note", "Job URL", "Timestamp"]
 
-# ── WordPress ────────────────────────────────────────────────────────────────
 WP_URL      = os.environ.get("WP_BASE_URL", "")
 WP_USER     = os.environ.get("WP_USERNAME", "")
 WP_PASSWORD = os.environ.get("WP_APP_PASSWORD", "")
@@ -85,14 +63,12 @@ WP_BASE      = WP_URL.rstrip("/")
 WP_JOBS_URL  = f"{WP_BASE}/job-listings"
 WP_MEDIA_URL = f"{WP_BASE}/media"
 
-# ── Mistral ──────────────────────────────────────────────────────────────────
 MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY", "")
 MISTRAL_MODEL   = "mistral-small-latest"
 MISTRAL_URL     = "https://api.mistral.ai/v1/chat/completions"
 
 ENABLE_PARAPHRASE = True
 
-# ── Startup warnings ─────────────────────────────────────────────────────────
 for _var, _val, _feature in [
     ("MISTRAL_API_KEY", MISTRAL_API_KEY, "paraphrasing"),
     ("WP_USERNAME",     WP_USER,         "WordPress posting"),
@@ -124,7 +100,6 @@ HEADERS = {
 SESSION = requests.Session()
 SESSION.headers.update(HEADERS)
 
-# Ethiopian cities / regions for location fallback.
 ETHIOPIA_LOCATIONS = [
     "Addis Ababa", "Adama", "Dire Dawa", "Gondar", "Mekelle", "Hawassa",
     "Bahir Dar", "Dessie", "Jimma", "Jijiga", "Shashamane", "Bishoftu",
@@ -136,11 +111,14 @@ ETHIOPIA_LOCATIONS = [
 ]
 DEFAULT_LOCATION = os.environ.get("JOBWEB_DEFAULT_LOCATION", "Ethiopia")
 
-# Hosts that are never a real external apply destination.
+# The demo/placeholder URL that JobRoller inserts — never a real apply link
+_JOBTHEMES_PLACEHOLDER = "http://www.jobthemes.com"
+_JOBTHEMES_PLACEHOLDER2 = "https://www.jobthemes.com"
+
 _NON_APPLY_HOST_SUBSTR = (
     "jobwebethiopia.com", "facebook.", "twitter.", "x.com", "linkedin.",
     "instagram.", "wa.me", "whatsapp", "t.me", "telegram",
-    "plus.google", "pinterest.", "youtube.",
+    "plus.google", "pinterest.", "youtube.", "jobthemes.com",
 )
 _NON_APPLY_PATH_SUBSTR = (
     "/wp-login", "/submit-job", "/register", "/my-dashboard",
@@ -155,7 +133,7 @@ def _is_real_apply_email(email: str) -> bool:
     return not any(dom == d or dom.endswith("." + d) for d in _NON_APPLY_EMAIL_DOMAINS)
 
 # =============================================================================
-#  LOGGING / COLOUR
+#  LOGGING
 # =============================================================================
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -193,18 +171,15 @@ MONTHS = {
     "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
 }
 
-# "23 Jun 2026" or "23/Jun/2026" — used in listing cards and detail header.
 TEXT_DATE_RE = re.compile(
     r"(\d{1,2})\s*(?:st|nd|rd|th)?\s*[/\s,]\s*([A-Za-z]+)\s*[/,]?\s*(\d{4})", re.I
 )
-# Numeric DD/MM/YYYY or DD-MM-YYYY.
 DMY_DATE_RE = re.compile(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b")
 
 DEADLINE_LABELS = ("application deadline", "closing date", "deadline",
                    "expiry date", "expires", "application closing date",
                    "closing date for application", "last date")
 
-# Body headings that introduce application instructions.
 _APPLY_HEAD_PHRASES = re.compile(
     r"^(?:how\s*(?:and|&)\s*deadline\s*to\s*apply|how\s*to\s*apply(?:\s*(?:and|&)\s*deadline)?|"
     r"how\s*to\s*submit|to\s*apply|application\s*(?:and|&)\s*deadline|"
@@ -280,12 +255,8 @@ def strip_tracking_params(url):
 # =============================================================================
 #  CLOUDFLARE EMAIL DECODE
 # =============================================================================
-# JobWebEthiopia uses Cloudflare's /cdn-cgi/l/email-protection obfuscation.
-# The encoded value is the hex string in the href after '#', decoded by XOR with
-# the first byte as key. We replicate this server-side.
 
 def _cf_decode_email(encoded: str) -> str:
-    """Decode a Cloudflare-obfuscated email hex string."""
     try:
         data = bytes.fromhex(encoded)
         key  = data[0]
@@ -294,11 +265,9 @@ def _cf_decode_email(encoded: str) -> str:
         return ""
 
 def _extract_cf_email(tag) -> str:
-    """Return decoded email from a Cloudflare protection <a> tag."""
     if tag is None:
         return ""
     href = tag.get("href", "")
-    # href="/cdn-cgi/l/email-protection#<hex>" or data-cfemail="<hex>"
     cf_data = tag.get("data-cfemail", "")
     if not cf_data:
         m = re.search(r"email-protection#([0-9a-fA-F]+)", href)
@@ -306,14 +275,12 @@ def _extract_cf_email(tag) -> str:
             cf_data = m.group(1)
     if cf_data:
         return _cf_decode_email(cf_data)
-    # Fallback: readable text in the tag (sometimes already decoded in HTML)
     text = tag.get_text(" ", strip=True)
     if "@" in text:
         return text.strip()
     return ""
 
 def decode_all_cf_emails(soup):
-    """Replace all Cloudflare-obfuscated email anchors in soup with plain text."""
     for a in soup.find_all("a", href=re.compile(r"email-protection")):
         decoded = _extract_cf_email(a)
         if decoded:
@@ -390,8 +357,6 @@ def parse_any_date(text: str) -> str:
 
 def clean_title(raw: str) -> str:
     t = sanitize_text(raw)
-    # Strip trailing " at COMPANY" if the H1 already includes it — JobRoller
-    # sometimes appends it in the page title but not the H1, so check first.
     t = re.sub(r"\s+at\s+.+$", "", t, flags=re.I) if " at " in t.lower() else t
     t = re.sub(r"\s*\d[\d,]*\s*views?\s*$", "", t, flags=re.I)
     return t.strip()
@@ -418,7 +383,6 @@ def location_from_text(text: str) -> str:
 def extract_salary(text: str) -> str:
     if not text:
         return ""
-    # Ethiopian Birr (ETB / Br / ብር)
     m = re.search(r"(?:ETB|Br\.?|birr)\s*([0-9]{1,3}(?:,\s?[0-9]{3})+(?:\.[0-9]+)?)", text, re.I)
     if m:
         amt = re.sub(r"\s+", "", m.group(1))
@@ -429,7 +393,25 @@ def extract_salary(text: str) -> str:
     return ""
 
 # =============================================================================
-#  QUALIFICATION / EXPERIENCE / FIELD  (shared schema)
+#  CLEAN CATEGORY STRINGS
+#  Strips suffixes like "Jobs in Ethiopia", "Jobs in Addis Ababa", etc.
+# =============================================================================
+
+_CATEGORY_NOISE_RE = re.compile(
+    r"\s*jobs?\s+in\s+ethiopia\b.*$"
+    r"|\s*jobs?\s+in\s+addis\s+ababa\b.*$"
+    r"|\s*jobs?\s+in\s+[a-z\s]+\b$"
+    r"|\s*jobs?\s*$",
+    re.I,
+)
+
+def clean_category(raw: str) -> str:
+    """Strip 'Jobs in Ethiopia' and similar noise from a raw category string."""
+    cleaned = _CATEGORY_NOISE_RE.sub("", raw.strip()).strip()
+    return cleaned if cleaned else raw.strip()
+
+# =============================================================================
+#  QUALIFICATION / EXPERIENCE / FIELD
 # =============================================================================
 
 def _kw_hit(text_low: str, keywords) -> bool:
@@ -654,6 +636,7 @@ def infer_field(title: str, description: str, fallback_categories: str = "") -> 
     for field, _strong, weak in FIELD_KEYWORD_MAP:
         if _kw_hit(text, weak):
             return field
+    # fallback_categories are already cleaned before being passed here
     if fallback_categories:
         cats = [c.strip() for c in fallback_categories.split(",") if c.strip()]
         for c in cats:
@@ -664,7 +647,7 @@ def infer_field(title: str, description: str, fallback_categories: str = "") -> 
     return ""
 
 # =============================================================================
-#  NLP TOOLS (lazy init, optional)
+#  NLP TOOLS
 # =============================================================================
 
 _grammar_tool = None
@@ -1113,7 +1096,6 @@ def post_job_to_wordpress(job: dict) -> tuple:
     if not (is_email or is_url_v):
         application = ""
 
-    # Upload logo
     attachment_id = None
     if logo_url:
         try:
@@ -1182,7 +1164,6 @@ def post_job_to_wordpress(job: dict) -> tuple:
 # =============================================================================
 
 def _norm_job_url(href: str) -> str:
-    """Canonicalise a /jobs/<slug>/ URL: https host, no query/fragment, trailing /."""
     if not href:
         return ""
     absu = urljoin(BASE_URL + "/", href)
@@ -1193,7 +1174,6 @@ def _norm_job_url(href: str) -> str:
     return urlunsplit(("https", p.netloc.lower(), path, "", ""))
 
 def _is_job_detail_path(path: str) -> bool:
-    """True for /jobs/<slug>/ — one segment after 'jobs', not 'page'."""
     parts = [s for s in path.split("/") if s]
     return (len(parts) == 2 and parts[0] == "jobs"
             and parts[1].lower() not in ("page",))
@@ -1247,45 +1227,25 @@ def collect_job_links(jobs_url: str, max_pages: int = MAX_PAGES) -> list:
 
 # =============================================================================
 #  STEP 2 — PARSE ONE JOBWEBETHIOPIA DETAIL PAGE
-# =============================================================================
 #
-#  JobRoller theme structure:
-#    • H1 heading: "Job Title at Company Name"
-#    • Meta list: Company, Location (link /job-location/<slug>/), State,
-#                 Job type (link /job-type/<slug>/), Job category (/job-category/)
-#    • Horizontal rule separators
-#    • "# Job Description" heading followed by the full body
-#    • "# Method of Application" heading near the bottom (contains apply email)
-#    • An upload form (Name/Email/Message) — NOT a real apply destination
+#  JobRoller structure (from Apps Script selectors):
+#    #mainContent
+#      div.section.single
+#        div.section_header
+#          h1                          → "Job Title at Company Name"
+#        div (2nd child — content div)
+#          ul                          → meta list (company, location, state, job type)
+#            li:nth-child(1)           → Company: <a>Company Name</a>
+#            li:nth-child(2)           → Location: <a>City</a>
+#            li:nth-child(3)           → State: <a>Region</a>
+#            li:nth-child(4)           → Job Type: <a>Full Time</a>
+#          font / p / div tags         → body paragraphs
+#          [last font/block]           → application info (email + deadline)
+#
+#  The apply email/URL is always towards the END of the content div, in a
+#  "Method of Application" / "How to Apply" section — just like the Apps Script
+#  reads font:nth-child(15) as the applicationInfo block.
 # =============================================================================
-
-_CONTENT_SELECTORS = [
-    "div.job-description",
-    "div.single-job-content",
-    "div#job-detail",
-    "div.noo-job-content",
-    "div.entry-content",
-    "article .entry-content",
-    "main .entry-content",
-    "div.page-content",
-]
-
-def _find_content(soup):
-    best, best_len = None, 0
-    for sel in _CONTENT_SELECTORS:
-        el = soup.select_one(sel)
-        if el:
-            txt = el.get_text(" ", strip=True)
-            if len(txt) > best_len:
-                best, best_len = el, len(txt)
-        if best and best_len > 300:
-            return best
-    if best:
-        return best
-    main = soup.find("main") or soup.select_one("div.noo-main")
-    if main:
-        return main
-    return soup.find("article") or soup.body or soup
 
 def _is_real_apply_url(href: str) -> bool:
     if not href:
@@ -1307,115 +1267,298 @@ def _is_apply_heading_line(line: str) -> bool:
         return False
     return bool(_APPLY_HEAD_PHRASES.match(s))
 
-def _split_description_and_apply(content_text: str):
-    if not content_text:
-        return "", ""
+def _clean_location_str(raw: str) -> str:
+    """Strip trailing 'Jobs', 'Jobs in Ethiopia', city slug suffixes from location strings."""
+    loc = raw.strip()
+    loc = re.sub(r"\s+jobs?\s*$", "", loc, flags=re.I).strip()
+    loc = re.sub(r"\s+jobs?\s+in\s+.+$", "", loc, flags=re.I).strip()
+    return loc
 
-    lines = content_text.split("\n")
-    kept = []
-    for ln in lines:
-        low = ln.strip().lower()
+def _extract_jobroller_content(soup) -> tuple:
+    """
+    Extract (content_el, meta_ul) from a JobRoller page using the exact
+    DOM structure: #mainContent > div.section.single > div:nth-child(2)
+
+    Returns (content_div, meta_ul) where content_div is the main body container
+    and meta_ul is the <ul> holding Company / Location / Job Type meta items.
+    Falls back gracefully if the markup differs.
+    """
+    # Primary: exact JobRoller path
+    main = soup.find(id="mainContent")
+    if main:
+        single = main.find("div", class_=lambda c: c and "single" in c.split())
+        if single:
+            children = [c for c in single.children
+                        if getattr(c, "name", None) in ("div", "section")]
+            # The 2nd child div holds the meta + body
+            content_div = children[1] if len(children) >= 2 else (children[0] if children else None)
+            if content_div:
+                meta_ul = content_div.find("ul")
+                return content_div, meta_ul
+
+    # Fallback selectors in priority order
+    for sel in ["div.single-job-content", "div.job-description", "div#job-detail",
+                "div.entry-content", "div.noo-job-content", "article", "main"]:
+        el = soup.select_one(sel)
+        if el and len(el.get_text(strip=True)) > 100:
+            return el, el.find("ul")
+
+    # Last resort: body (will grab everything, but body-drop lines will filter nav junk)
+    return soup.body or soup, None
+
+def _extract_body_blocks(content_div) -> list:
+    """
+    Return a list of (tag, text) for every meaningful text block inside
+    content_div, excluding the <ul> meta list at the top.
+    Blocks are <font>, <p>, <div>, <h2>...<h6>, <blockquote>, <li> children.
+    """
+    blocks = []
+    skip_tags = set()
+
+    # Mark the first <ul> (meta list) to skip
+    first_ul = content_div.find("ul")
+    if first_ul:
+        skip_tags.add(id(first_ul))
+
+    for child in content_div.descendants:
+        if not hasattr(child, "name") or not child.name:
+            continue
+        if child.name not in ("font", "p", "div", "h2", "h3", "h4", "h5", "h6",
+                               "blockquote", "span", "b", "strong"):
+            continue
+        # Skip if it's a descendant of the ul meta list
+        if any(id(p) in skip_tags for p in child.parents):
+            continue
+        # Skip empty nodes
+        txt = child.get_text(" ", strip=True)
+        if not txt or len(txt) < 5:
+            continue
+        # Skip pure nav noise
+        low = txt.lower()
         if low in _BODY_DROP_LINES:
             continue
-        if any(low.startswith(m) for m in _BODY_CUT_MARKERS):
+        # Skip if it's entirely contained in an ancestor we already added
+        # (avoid double-counting nested elements)
+        parent_added = any(
+            id(p) in {id(b[0]) for b in blocks}
+            for p in child.parents
+            if hasattr(p, "name") and p.name in ("font", "p", "div",
+                                                   "blockquote", "h2", "h3", "h4")
+        )
+        if parent_added:
+            continue
+        blocks.append((child, txt))
+
+    return blocks
+
+def _split_blocks_at_apply(blocks: list) -> tuple:
+    """
+    Split blocks into (description_blocks, apply_blocks) at the first
+    'How to Apply' / 'Method of Application' heading line.
+    """
+    for i, (tag, txt) in enumerate(blocks):
+        if _is_apply_heading_line(txt):
+            return blocks[:i], blocks[i:]
+    return blocks, []
+
+def _extract_apply_from_blocks(apply_blocks, content_div) -> tuple:
+    """
+    From the apply section blocks, extract (apply_email, apply_url).
+    Searches:
+      1. Cloudflare-decoded email text already in the soup
+      2. mailto: anchors
+      3. Real external http URLs
+      4. Plain email addresses in text
+    """
+    apply_email = ""
+    apply_url   = ""
+
+    # Combine text of apply blocks for regex scanning
+    apply_text = "\n".join(txt for _, txt in apply_blocks)
+
+    # 1. mailto: anchors anywhere in content_div (most reliable)
+    for a in content_div.find_all("a", href=True):
+        href = a["href"].strip()
+        if href.lower().startswith("mailto:"):
+            cand = href[7:].split("?")[0].strip()
+            if _is_real_apply_email(cand):
+                apply_email = cand
+                break
+
+    # 2. Cloudflare-decoded email already embedded as plain text in apply section
+    if not apply_email:
+        m = EMAIL_PATTERN.search(apply_text)
+        if m:
+            cand = m.group(0)
+            if _is_real_apply_email(cand):
+                apply_email = cand
+
+    # 3. External URL in apply section (never jobthemes.com placeholder)
+    for a in content_div.find_all("a", href=True):
+        href = a["href"].strip()
+        if _is_real_apply_url(href):
+            apply_url = strip_tracking_params(href)
             break
-        kept.append(ln)
 
-    apply_idx = None
-    for i, ln in enumerate(kept):
-        if _is_apply_heading_line(ln):
-            apply_idx = i
-            break
+    if not apply_url:
+        for u in URL_PATTERN.findall(apply_text):
+            if _is_real_apply_url(u):
+                apply_url = strip_tracking_params(u.rstrip(".,);"))
+                break
 
-    if apply_idx is None:
-        return "\n".join(kept).strip(), ""
-
-    description = "\n".join(kept[:apply_idx]).strip()
-    apply_text  = "\n".join(kept[apply_idx:]).strip()
-    if not description:
-        return "\n".join(kept).strip(), ""
-    return description, apply_text
-
-def _anchors_in(scope, needle: str):
-    out = []
-    for a in scope.find_all("a", href=True):
-        if needle in (urlparse(a["href"]).path or a["href"]):
-            t = a.get_text(" ", strip=True)
-            if t:
-                out.append(t)
-    return out
+    return apply_email, apply_url
 
 def scrape_job_detail(url: str) -> dict:
     """Parse a single JobWebEthiopia /jobs/<slug>/ page into a raw_job dict."""
     soup = get_soup(url)
 
     # ── Title ──────────────────────────────────────────────────────────────
-    # H1 on JobRoller is "Job Title at Company Name" — strip the company part.
-    h1 = (soup.select_one("h1.job-title") or soup.select_one("h1.entry-title")
+    # JobRoller H1: div.section_header > h1  OR  span#topss h1
+    h1 = (soup.select_one("div.section_header h1")
+          or soup.select_one("h1.job-title")
+          or soup.select_one("h1.entry-title")
           or soup.find("h1"))
     raw_title = h1.get_text(" ", strip=True) if h1 else ""
-    # Try to split off " at COMPANY" so jobTitle is clean.
     title = sanitize_text(raw_title)
     company_from_h1 = ""
-    if " at " in title:
+    if " at " in title.lower():
         parts = title.rsplit(" at ", 1)
         title           = parts[0].strip()
         company_from_h1 = parts[1].strip()
 
-    # ── Company name ───────────────────────────────────────────────────────
-    company_name = ""
+    # ── Main content extraction ────────────────────────────────────────────
+    content_div, meta_ul = _extract_jobroller_content(soup)
+
+    # ── Company + Location + Job Type from meta <ul> ───────────────────────
+    company_name    = ""
     company_url_val = ""
-    # JobRoller meta: "Company: XXXXX" text node or a link.
-    meta_list = soup.select_one("ul.job-info") or soup.select_one("ul.listing-info")
-    if meta_list:
-        for li in meta_list.find_all("li"):
+    location        = DEFAULT_LOCATION
+    job_type        = "full-time"
+    job_categories  = []
+
+    if meta_ul:
+        items = meta_ul.find_all("li", recursive=False)
+        for li in items:
             li_text = li.get_text(" ", strip=True)
-            if li_text.lower().startswith("company"):
-                a_tag = li.find("a")
-                if a_tag:
-                    company_name    = a_tag.get_text(" ", strip=True)
-                    company_url_val = urljoin(BASE_URL, a_tag.get("href", ""))
-                else:
-                    company_name = re.sub(r"^company\s*:?\s*", "", li_text, flags=re.I).strip()
+            li_lower = li_text.lower()
+            a_tag = li.find("a")
+            a_text = a_tag.get_text(" ", strip=True) if a_tag else ""
+            a_href = a_tag.get("href", "") if a_tag else ""
+
+            if li_lower.startswith("company") or "/company/" in a_href:
+                company_name    = a_text or re.sub(r"^company\s*:?\s*", "", li_text, flags=re.I).strip()
+                company_url_val = urljoin(BASE_URL, a_href) if a_href else ""
+
+            elif "/job-location/" in a_href or li_lower.startswith("location"):
+                loc_raw = a_text or re.sub(r"^location\s*:?\s*", "", li_text, flags=re.I).strip()
+                location = _clean_location_str(loc_raw)
+
+            elif "/job-category/" in a_href or li_lower.startswith("categor"):
+                job_categories.append(clean_category(a_text or li_text))
+
+            elif "/job-type/" in a_href or li_lower.startswith("job type") or li_lower.startswith("type"):
+                type_raw = a_text or re.sub(r"^(?:job\s+)?type\s*:?\s*", "", li_text, flags=re.I).strip()
+                job_type = map_job_type(type_raw)
+
+            elif li_lower.startswith("state") or "/job-state/" in a_href:
+                # State overrides location with more specific value
+                state_raw = a_text or re.sub(r"^state\s*:?\s*", "", li_text, flags=re.I).strip()
+                state_clean = _clean_location_str(state_raw)
+                if state_clean:
+                    location = state_clean
+
     if not company_name:
         company_name = company_from_h1 or "JobWebEthiopia Employer"
 
-    # ── Location ───────────────────────────────────────────────────────────
-    location_opts = _anchors_in(soup, "/job-location/")
-    location = pick_location(location_opts)
+    # ── Also scan /job-location/ and /job-type/ anchor hrefs site-wide ────
+    # (fallback for themes that don't use ul meta list)
+    if location == DEFAULT_LOCATION:
+        for a in soup.find_all("a", href=True):
+            if "/job-location/" in a["href"]:
+                loc_raw = a.get_text(" ", strip=True)
+                location = _clean_location_str(loc_raw)
+                break
 
-    # Also check "State:" in the meta list for a more specific city.
-    state_val = ""
-    if meta_list:
-        for li in meta_list.find_all("li"):
-            if li.get_text(" ", strip=True).lower().startswith("state"):
-                a_tag = li.find("a")
-                if a_tag:
-                    sv = a_tag.get_text(" ", strip=True)
-                    # Strip trailing "Jobs" suffix (e.g. "Addis Ababa Jobs")
-                    sv = re.sub(r"\s+jobs?\s*$", "", sv, flags=re.I).strip()
-                    state_val = sv
-    if state_val:
-        location = state_val
+    if job_type == "full-time":
+        for a in soup.find_all("a", href=True):
+            if "/job-type/" in a["href"]:
+                job_type = map_job_type(a.get_text(" ", strip=True))
+                break
 
-    # ── Job type ───────────────────────────────────────────────────────────
-    job_type_opts = _anchors_in(soup, "/job-type/")
-    job_type = map_job_type(job_type_opts[0]) if job_type_opts else "full-time"
+    # ── Extract body blocks ────────────────────────────────────────────────
+    blocks = _extract_body_blocks(content_div)
+    desc_blocks, apply_blocks = _split_blocks_at_apply(blocks)
 
-    # ── Categories ─────────────────────────────────────────────────────────
-    category_opts = _anchors_in(soup, "/job-category/")
-    job_field_raw = ", ".join(dict.fromkeys(category_opts)) if category_opts else ""
+    # Build clean description text from desc_blocks
+    seen_lines = set()
+    desc_lines = []
+    for tag, txt in desc_blocks:
+        # Convert block to multi-line text preserving bullets
+        block_text = html_block_to_text(tag)
+        for ln in block_text.split("\n"):
+            ln_s = ln.strip()
+            if not ln_s:
+                continue
+            ln_low = ln_s.lower()
+            if ln_low in _BODY_DROP_LINES:
+                continue
+            if any(ln_low.startswith(m) for m in _BODY_CUT_MARKERS):
+                break
+            if ln_s in seen_lines:
+                continue
+            seen_lines.add(ln_s)
+            desc_lines.append(ln_s)
+
+    description = "\n".join(desc_lines).strip()
+    description = re.sub(r"\n{3,}", "\n\n", description)
+
+    # Build apply text for display/debugging
+    apply_text = "\n".join(txt for _, txt in apply_blocks)
+
+    # ── If description is still empty or tiny, use full content minus known junk ─
+    if len(description.split()) < 20:
+        full_text = html_block_to_text(content_div)
+        # Strip obvious nav noise at the top (everything before the first real sentence)
+        # Look for the first line that looks like actual job content
+        lines = [l.strip() for l in full_text.split("\n") if l.strip()]
+        content_start = 0
+        for idx, ln in enumerate(lines):
+            ln_low = ln.lower()
+            # Skip lines that are clearly nav/header noise
+            if ln_low in {"home", "about us", "contact", "privacy policy",
+                          "login/register", "submit a job", "submit job",
+                          "register", "my dashboard", "linkedin page",
+                          "search", "save", "share", "bookmark job"}:
+                continue
+            if re.match(r"^\d+\s*jobs?\s*$", ln_low):
+                continue
+            if re.match(r"^\d{1,2}\s+\w+\s+\d{4}$", ln):
+                continue
+            # Once we see something that looks real, start here
+            if len(ln.split()) >= 4:
+                content_start = idx
+                break
+        lines = lines[content_start:]
+        # Cut at apply heading or cut markers
+        cut_at = len(lines)
+        for idx, ln in enumerate(lines):
+            if _is_apply_heading_line(ln):
+                cut_at = idx
+                apply_text = "\n".join(lines[idx:])
+                break
+            if any(ln.lower().startswith(m) for m in _BODY_CUT_MARKERS):
+                cut_at = idx
+                break
+        description = "\n".join(lines[:cut_at]).strip()
 
     # ── Logo ───────────────────────────────────────────────────────────────
     logo = ""
     og = soup.find("meta", attrs={"property": "og:image"})
     if og and og.get("content"):
         candidate = og["content"].strip()
-        # Reject the site's own generic logo
         if "jobwebethio" not in candidate.lower():
             logo = candidate
     if not logo:
-        # Employer logo sometimes in sidebar
         emp_img = soup.select_one("div.company-logo img") or soup.select_one("img.company-logo")
         if emp_img and emp_img.get("src"):
             logo = emp_img["src"].strip()
@@ -1424,7 +1567,6 @@ def scrape_job_detail(url: str) -> dict:
     date_posted = ""
     deadline    = ""
 
-    # Date in the card header: "23 Jun 2026" or "23/Jun/2026"
     date_el = soup.select_one("span.date") or soup.select_one("time")
     if date_el:
         raw_date = date_el.get_text(" ", strip=True)
@@ -1432,80 +1574,49 @@ def scrape_job_detail(url: str) -> dict:
         if ds:
             date_posted = ds[0]
 
+    # Search entire page text for deadline
     page_text_full = soup.get_text("\n")
     for lab in DEADLINE_LABELS:
-        m = re.search(rf"{lab}\s*[:\-]?\s*([^\n<]+)", page_text_full, re.I)
+        m = re.search(rf"{re.escape(lab)}\s*[:\-]?\s*([^\n<]{{3,60}})", page_text_full, re.I)
         if m:
             d = parse_any_date(m.group(1))
             if d:
                 deadline = d
                 break
 
+    # Also check apply_text for dates (closing dates often there)
+    if not deadline and apply_text:
+        ds = text_dates(apply_text) or dmy_dates(apply_text)
+        if ds:
+            # Take the latest date found (most likely the deadline)
+            deadline = sorted(ds)[-1]
+
     if not date_posted:
         date_posted = datetime.now().strftime("%Y-%m-%d")
     if not deadline:
         deadline = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
 
-    # ── Body: description + apply section ──────────────────────────────────
-    content_el = _find_content(soup)
-    content_copy = BeautifulSoup(str(content_el), "lxml")
-    content_text = html_block_to_text(content_copy)
-    description, apply_text = _split_description_and_apply(content_text)
-    if not description:
-        description = content_text
+    # ── Apply: email + URL ─────────────────────────────────────────────────
+    apply_email, apply_url = _extract_apply_from_blocks(apply_blocks, content_div)
 
-    # ── Qualification + experience ─────────────────────────────────────────
-    qual_block = ""
-    qm = re.search(
-        r"(?:^|\n)[ \t]*(?:educational\s+(?:background|requirement|qualification)|"
-        r"qualifications?(?:\s*(?:&|and)\s*experience)?|about\s+you)"
-        r"(?:\s+\w+){0,3}\s*:?[ \t]*\n"
-        r"(.*?)"
-        r"(?:\n[ \t]*(?:how\s*(?:and|&)?\s*(?:deadline\s*)?to\s*apply|method\s+of\s+application|"
-        r"mode\s+of\s+application|what\s+we\s+offer|key\s+competenc)\b"
-        r"|\n[ \t]*[A-Z][^\n]{0,60}:[ \t]*\n|\Z)",
-        description, re.I | re.S)
-    if qm:
-        qual_block = qm.group(1).strip()[:1500]
+    # If no apply blocks found (no clear heading), search full content_div
+    if not apply_email and not apply_url:
+        apply_email, apply_url = _extract_apply_from_blocks([], content_div)
 
-    qualification = extract_qualification(qual_block or description)
-    experience    = extract_experience_band(qual_block or description)
+    # ── Qualification + Experience ─────────────────────────────────────────
+    qualification = extract_qualification(description)
+    experience    = extract_experience_band(description)
 
-    # ── Job field ──────────────────────────────────────────────────────────
-    job_field = infer_field(title, description, job_field_raw)
-
-    # ── Apply target ───────────────────────────────────────────────────────
-    apply_email = ""
-    apply_url   = ""
-
-    # 1) Cloudflare-decoded emails in content (already decoded by get_soup)
-    scan_text = apply_text or description
-    m_email = EMAIL_PATTERN.search(scan_text)
-    if m_email:
-        cand = m_email.group(0)
-        if _is_real_apply_email(cand):
-            apply_email = cand
-
-    # 2) Explicit mailto: anchors in content_el
-    for a in content_el.find_all("a", href=True):
-        href = a["href"].strip()
-        if href.lower().startswith("mailto:"):
-            cand = href[7:].split("?")[0].strip()
-            if _is_real_apply_email(cand):
-                apply_email = apply_email or cand
-        elif _is_real_apply_url(href):
-            apply_url = apply_url or strip_tracking_params(href)
-
-    # 3) Plain URL fallback in apply text
-    if not apply_url:
-        for u in URL_PATTERN.findall(scan_text):
-            if _is_real_apply_url(u):
-                apply_url = strip_tracking_params(u.rstrip(".,);"))
-                break
-
+    # ── Salary ────────────────────────────────────────────────────────────
     salary = extract_salary(description)
 
-    # ── Company website (from "Website" sidebar link) ─────────────────────
+    # ── Job field ─────────────────────────────────────────────────────────
+    # Clean category strings before passing to infer_field
+    cleaned_categories = [clean_category(c) for c in job_categories]
+    job_field_raw = ", ".join(dict.fromkeys(c for c in cleaned_categories if c))
+    job_field = infer_field(title, description, job_field_raw)
+
+    # ── Company website ────────────────────────────────────────────────────
     company_website = ""
     for a in soup.find_all("a", href=True):
         href = a["href"]
@@ -1534,7 +1645,7 @@ def scrape_job_detail(url: str) -> dict:
         "salary":          salary,
         "apply_email":     apply_email,
         "apply_url":       apply_url,
-        "apply_text":      apply_text,
+        "apply_text":      apply_text[:300],
         "job_url":         _norm_job_url(url),
     }
 
@@ -1836,3 +1947,4 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         sys.exit(1)
+
