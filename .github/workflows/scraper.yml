@@ -43,6 +43,7 @@ jobs:
       - name: Run scraper
         env:
           WP_BASE_URL:      ${{ secrets.WP_BASE_URL }}
+          INTERNAL_BOT_KEY: ${{ secrets.INTERNAL_BOT_KEY }}
           WP_USERNAME:      ${{ secrets.WP_USERNAME }}
           WP_APP_PASSWORD:  ${{ secrets.WP_APP_PASSWORD }}
           MISTRAL_API_KEY:  ${{ secrets.MISTRAL_API_KEY }}
